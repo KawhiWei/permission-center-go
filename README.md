@@ -32,7 +32,7 @@
 | --- | --- | --- |
 | GET | `/auth/config` | 获取不含密钥的 OIDC 公共配置 |
 | GET | `/auth/login` | 创建 state、nonce、PKCE 并返回 NexusAuth 授权地址 |
-| GET | `/auth/callback` | 交换 code、验证 ID Token 并建立会话 |
+| GET | `/signin-oidc` | 交换 code、验证 ID Token 并建立会话 |
 | GET | `/auth/me` | 获取当前登录用户 |
 | POST | `/auth/logout` | 清除会话并返回 NexusAuth 登出地址 |
 
@@ -42,10 +42,12 @@
 
 - Client ID：`permission-center-web`，也可以使用你的实际标识。
 - 客户端认证方式：`client_secret_basic`。
-- Redirect URI：`http://localhost:5273/api/auth/callback`。
-- Post logout redirect URI：`http://localhost:5273/`。
+- **Redirect URI（回调地址）**：`http://localhost:8080/signin-oidc`。
+- **Post logout redirect URI（登出回跳地址）**：`http://localhost:5274/`。
 - 服务资源 Scope：示例为 `permission-center-api`。
 - 允许的 Scope：`openid profile email offline_access permission-center-api`。
+
+本地 NexusAuth 的 Authority 为 `http://localhost:5100`。实现与 NexusAuth Workbench 的 BFF 模式一致：NexusAuth 直连 Go 后端回调地址，后端建立加密会话后跳转到 `http://localhost:5274/auth/callback`。服务从 OIDC discovery 文档自动读取统一登出端点 `http://localhost:5100/connect/endsession`；浏览器点击“退出登录”后，后端先清除权限中心会话，再携带 `id_token_hint` 和上述登出回跳地址跳转至该端点。
 
 修改 `configs/app.yaml` 中的 `oidc` 配置，生成独立的随机 `session_secret`，最后设置 `enabled: true`。对应环境变量均以 `PERMISSION_CENTER_OIDC_` 开头，例如 `CLIENT_ID`、`CLIENT_SECRET`、`SCOPES` 和 `SESSION_SECRET`。
 
@@ -79,4 +81,4 @@ yarn install
 yarn dev
 ```
 
-访问 `http://localhost:5273/`。可用 `PERMISSION_CENTER_DATABASE_URL` 和 `PERMISSION_CENTER_HTTP_ADDR` 覆盖数据库及监听配置。本项目不使用消息队列，授权变更直接通过事务写入 PostgreSQL。
+访问 `http://localhost:5274/`。可用 `PERMISSION_CENTER_DATABASE_URL` 和 `PERMISSION_CENTER_HTTP_ADDR` 覆盖数据库及监听配置。本项目不使用消息队列，授权变更直接通过事务写入 PostgreSQL。

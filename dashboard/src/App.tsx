@@ -17,7 +17,7 @@ import {
 } from 'tdesign-react';
 import './permission-console.less';
 import Login from './pages/login';
-import { getCurrentUser } from './api/login';
+import { getConfig, getCurrentUser, logout } from './api/login';
 
 type ResourceType = 'menu' | 'button';
 type Workspace = 'permissions' | 'user-roles';
@@ -213,6 +213,8 @@ const readRoleIDs = (value: unknown): string[] => {
 const App = () => {
   const [authReady, setAuthReady] = useState(false);
   const [authenticated, setAuthenticated] = useState(false);
+  const [oidcEnabled, setOIDCEnabled] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
   const [workspace, setWorkspace] = useState<Workspace>('permissions');
   const [application, setApplication] = useState('admin-console');
   const [activeApp, setActiveApp] = useState('admin-console');
@@ -269,8 +271,11 @@ const App = () => {
   }, []);
 
   useEffect(() => {
-    getCurrentUser()
-      .then((result) => setAuthenticated(result.isAuthenticated))
+    Promise.all([getCurrentUser(), getConfig()])
+      .then(([user, oidc]) => {
+        setAuthenticated(user.isAuthenticated);
+        setOIDCEnabled(oidc.enabled);
+      })
       .catch(() => setAuthenticated(false))
       .finally(() => setAuthReady(true));
   }, []);
@@ -434,6 +439,21 @@ const App = () => {
     }
   };
 
+  const signOut = async () => {
+    try {
+      setLoggingOut(true);
+      const result = await logout();
+      setAuthenticated(false);
+      if (result.logoutUrl) {
+        window.location.assign(result.logoutUrl);
+      }
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : '退出登录失败');
+    } finally {
+      setLoggingOut(false);
+    }
+  };
+
   const roleColumns: TableProps<Role>['columns'] = [
     {
       colKey: 'name',
@@ -550,6 +570,11 @@ const App = () => {
           <Button icon={<RefreshIcon />} loading={loading} onClick={() => void load(application)}>
             加载应用
           </Button>
+          {oidcEnabled && (
+            <Button variant="outline" loading={loggingOut} onClick={() => void signOut()}>
+              退出登录
+            </Button>
+          )}
         </div>
       </header>
 

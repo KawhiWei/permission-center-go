@@ -8,7 +8,7 @@ export default defineConfig({
     react()
   ],
   server: {
-    port: 5273,
+    port: 5274,
     proxy: {
       '/api': {
         target: 'http://localhost:8080',

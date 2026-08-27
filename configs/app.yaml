@@ -1,16 +1,16 @@
 http:
   addr: ":8080"
 database:
-  url: "postgres://postgres:postgres@localhost:5432/permission_center?sslmode=disable"
+  url: "postgres://postgres:postgres@localhost:55433/permission_center?sslmode=disable"
   max_conns: 10
   min_conns: 2
 oidc:
   enabled: false
   authority: "http://localhost:5100"
-  client_id: "permission-center-web"
+  client_id: "permission-center-api"
   client_secret: "replace-with-client-secret"
-  redirect_uri: "http://localhost:5273/api/auth/callback"
-  post_logout_redirect_uri: "http://localhost:5273/"
+  redirect_uri: "http://localhost:8080/signin-oidc"
+  post_logout_redirect_uri: "http://localhost:5274/"
   scopes: ["openid", "profile", "email", "offline_access", "permission-center-api"]
   audience: "permission-center-api"
   session_secret: "replace-with-at-least-32-random-characters"

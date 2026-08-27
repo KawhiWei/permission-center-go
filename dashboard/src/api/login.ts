@@ -12,6 +12,7 @@ export interface LoginResponse {
 }
 
 export interface ConfigResponse {
+  enabled: boolean;
   authority: string;
   clientId: string;
 }

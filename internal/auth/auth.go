@@ -224,6 +224,7 @@ func (s *Service) Callback(w http.ResponseWriter, r *http.Request) error {
 		Picture:       claims.Picture,
 		EmailVerified: claims.EmailVerified,
 		ExpiresAt:     idToken.Expiry.Unix(),
+		IDToken:       rawIDToken,
 	}
 	if data.User.Subject == "" {
 		return fmt.Errorf("%w: id_token subject is empty", ErrInvalidRequest)
@@ -255,7 +256,11 @@ func (s *Service) Logout(w http.ResponseWriter, r *http.Request) (string, error)
 	if s == nil {
 		return "", ErrDisabled
 	}
+	var idTokenHint string
 	if s.sessions != nil {
+		if data, err := s.sessions.load(r); err == nil && data.User != nil {
+			idTokenHint = data.User.IDToken
+		}
 		s.sessions.clear(w)
 	}
 	if !s.enabled || s.endSessionEndpoint == "" {
@@ -266,6 +271,9 @@ func (s *Service) Logout(w http.ResponseWriter, r *http.Request) (string, error)
 		return "", fmt.Errorf("invalid oidc end_session_endpoint")
 	}
 	query := logoutURL.Query()
+	if idTokenHint != "" {
+		query.Set("id_token_hint", idTokenHint)
+	}
 	if s.cfg.PostLogoutRedirectURI != "" {
 		query.Set("post_logout_redirect_uri", s.cfg.PostLogoutRedirectURI)
 	}

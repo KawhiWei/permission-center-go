@@ -3,6 +3,7 @@ package httpserver
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/luck/permission-center-go/internal/auth"
 )
@@ -37,9 +38,20 @@ func (h *Handler) AuthCallback(w http.ResponseWriter, r *http.Request) {
 		writeAuthError(w, err)
 		return
 	}
-	// The dashboard owns this route after the backend has established its
-	// session. Keep the target stable so the frontend can finish its bootstrap.
-	http.Redirect(w, r, "/auth/callback", http.StatusFound)
+	// Follow the NexusAuth Workbench BFF pattern: the backend owns the OIDC
+	// callback, then returns the browser to the frontend once its session exists.
+	http.Redirect(w, r, dashboardCallbackURL(h.auth), http.StatusFound)
+}
+
+func dashboardCallbackURL(authenticator *auth.Service) string {
+	if authenticator == nil {
+		return "/auth/callback"
+	}
+	frontendBase := strings.TrimRight(authenticator.PublicConfig().PostLogoutRedirectURI, "/")
+	if frontendBase == "" {
+		return "/auth/callback"
+	}
+	return frontendBase + "/auth/callback"
 }
 
 func (h *Handler) AuthMe(w http.ResponseWriter, r *http.Request) {

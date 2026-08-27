@@ -33,6 +33,9 @@ type sessionUser struct {
 	Picture       string `json:"picture,omitempty"`
 	EmailVerified bool   `json:"email_verified,omitempty"`
 	ExpiresAt     int64  `json:"expires_at"`
+	// IDToken is never returned by the API. It is retained in the encrypted
+	// HttpOnly session only so NexusAuth can identify the browser session at logout.
+	IDToken string `json:"id_token,omitempty"`
 }
 
 type sessionData struct {

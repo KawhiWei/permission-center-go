@@ -3,6 +3,7 @@ package auth
 import (
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 	"time"
 
@@ -61,5 +62,42 @@ func TestMiddlewareRequiresSessionOnlyWhenEnabled(t *testing.T) {
 	enabled.Middleware(next).ServeHTTP(enabledResponse, httptest.NewRequest(http.MethodGet, "/v1/roles", nil))
 	if enabledResponse.Code != http.StatusUnauthorized {
 		t.Fatalf("enabled auth status = %d", enabledResponse.Code)
+	}
+}
+
+func TestLogoutUsesNexusAuthIDTokenHint(t *testing.T) {
+	service, err := NewForTest(testConfig(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.endSessionEndpoint = "http://localhost:5100/connect/endsession"
+	service.cfg.ClientID = "permission-center-web"
+	service.cfg.PostLogoutRedirectURI = "http://localhost:5274/"
+
+	loginRecorder := httptest.NewRecorder()
+	if err := service.sessions.save(loginRecorder, &sessionData{User: &sessionUser{
+		Subject: "user-1", IDToken: "signed-id-token", ExpiresAt: time.Now().Add(time.Hour).Unix(),
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/auth/logout", nil)
+	request.AddCookie(loginRecorder.Result().Cookies()[0])
+	logoutRecorder := httptest.NewRecorder()
+	logoutURL, err := service.Logout(logoutRecorder, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := url.Parse(logoutURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.Query().Get("id_token_hint") != "signed-id-token" {
+		t.Fatalf("id_token_hint = %q", parsed.Query().Get("id_token_hint"))
+	}
+	if parsed.Query().Get("post_logout_redirect_uri") != "http://localhost:5274/" {
+		t.Fatalf("post_logout_redirect_uri = %q", parsed.Query().Get("post_logout_redirect_uri"))
+	}
+	if len(logoutRecorder.Result().Cookies()) != 1 || logoutRecorder.Result().Cookies()[0].MaxAge >= 0 {
+		t.Fatalf("logout cookie = %#v", logoutRecorder.Result().Cookies())
 	}
 }

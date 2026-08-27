@@ -9,7 +9,7 @@ func NewServer(handler *Handler, authMiddleware ...func(http.Handler) http.Handl
 	})
 	mux.HandleFunc("GET /auth/config", handler.AuthConfig)
 	mux.HandleFunc("GET /auth/login", handler.AuthLogin)
-	mux.HandleFunc("GET /auth/callback", handler.AuthCallback)
+	mux.HandleFunc("GET /signin-oidc", handler.AuthCallback)
 	mux.HandleFunc("GET /auth/me", handler.AuthMe)
 	mux.HandleFunc("POST /auth/logout", handler.AuthLogout)
 
