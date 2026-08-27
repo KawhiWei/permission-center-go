@@ -30,3 +30,14 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+
+# React / Vite dashboard dependencies and generated artifacts
+dashboard/node_modules/
+dashboard/dist/
+dashboard/.vite/
+dashboard/.eslintcache
+dashboard/*.tsbuildinfo
+dashboard/.env
+dashboard/.env.*
+!dashboard/.env.example
+dashboard/.DS_Store
