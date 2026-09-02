@@ -28,6 +28,7 @@ type DatabaseConfig struct {
 type OIDCConfig struct {
 	Enabled               bool     `yaml:"enabled"`
 	Authority             string   `yaml:"authority"`
+	BackchannelAuthority  string   `yaml:"backchannel_authority"`
 	ClientID              string   `yaml:"client_id"`
 	ClientSecret          string   `yaml:"client_secret"`
 	RedirectURI           string   `yaml:"redirect_uri"`
@@ -77,6 +78,9 @@ func applyOIDCEnv(cfg *OIDCConfig) {
 	if value := os.Getenv("PERMISSION_CENTER_OIDC_AUTHORITY"); value != "" {
 		cfg.Authority = value
 	}
+	if value := os.Getenv("PERMISSION_CENTER_OIDC_BACKCHANNEL_AUTHORITY"); value != "" {
+		cfg.BackchannelAuthority = value
+	}
 	if value := os.Getenv("PERMISSION_CENTER_OIDC_CLIENT_ID"); value != "" {
 		cfg.ClientID = value
 	}
@@ -115,6 +119,11 @@ func (c OIDCConfig) Validate() error {
 	}
 	if err := validateHTTPURL(c.Authority, "oidc.authority"); err != nil {
 		return err
+	}
+	if strings.TrimSpace(c.BackchannelAuthority) != "" {
+		if err := validateHTTPURL(c.BackchannelAuthority, "oidc.backchannel_authority"); err != nil {
+			return err
+		}
 	}
 	if err := validateHTTPURL(c.RedirectURI, "oidc.redirect_uri"); err != nil {
 		return err

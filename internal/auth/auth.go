@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -51,13 +52,16 @@ type PublicConfig struct {
 }
 
 type Service struct {
-	cfg                config.OIDCConfig
-	enabled            bool
-	oauthConfig        *oauth2.Config
-	verifier           *oidc.IDTokenVerifier
-	endSessionEndpoint string
-	sessions           *sessionStore
-	now                func() time.Time
+	cfg                  config.OIDCConfig
+	enabled              bool
+	oauthConfig          *oauth2.Config
+	verifier             *oidc.IDTokenVerifier
+	endSessionEndpoint   string
+	sessions             *sessionStore
+	httpClient           *http.Client
+	publicAuthority      *url.URL
+	backchannelAuthority *url.URL
+	now                  func() time.Time
 }
 
 // New discovers the provider's authorization, token, issuer and JWKS
@@ -71,28 +75,40 @@ func New(ctx context.Context, cfg config.OIDCConfig) (*Service, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
+	httpClient, publicAuthority, backchannelAuthority, err := newOIDCHTTPClient(cfg)
+	if err != nil {
+		return nil, err
+	}
 	sessions, err := newSessionStore(cfg)
 	if err != nil {
 		return nil, err
 	}
-	provider, err := oidc.NewProvider(ctx, cfg.Authority)
+	provider, err := oidc.NewProvider(withOIDCHTTPClient(ctx, httpClient), cfg.Authority)
 	if err != nil {
 		return nil, fmt.Errorf("discover oidc provider: %w", err)
 	}
 	service.sessions = sessions
+	service.httpClient = httpClient
+	service.publicAuthority = publicAuthority
+	service.backchannelAuthority = backchannelAuthority
+	endpoint := provider.Endpoint()
 	service.oauthConfig = &oauth2.Config{
 		ClientID:     cfg.ClientID,
 		ClientSecret: cfg.ClientSecret,
-		Endpoint:     provider.Endpoint(),
-		RedirectURL:  cfg.RedirectURI,
-		Scopes:       append([]string(nil), cfg.Scopes...),
+		Endpoint: oauth2.Endpoint{
+			AuthURL:       service.publicEndpoint(endpoint.AuthURL),
+			DeviceAuthURL: endpoint.DeviceAuthURL,
+			TokenURL:      endpoint.TokenURL,
+		},
+		RedirectURL: cfg.RedirectURI,
+		Scopes:      append([]string(nil), cfg.Scopes...),
 	}
 	service.verifier = provider.Verifier(&oidc.Config{ClientID: cfg.ClientID})
 	var metadata struct {
 		EndSessionEndpoint string `json:"end_session_endpoint"`
 	}
 	if err := provider.Claims(&metadata); err == nil {
-		service.endSessionEndpoint = metadata.EndSessionEndpoint
+		service.endSessionEndpoint = service.publicEndpoint(metadata.EndSessionEndpoint)
 	}
 	return service, nil
 }
@@ -193,7 +209,8 @@ func (s *Service) Callback(w http.ResponseWriter, r *http.Request) error {
 	if err := s.sessions.save(w, data); err != nil {
 		return err
 	}
-	token, err := s.oauthConfig.Exchange(r.Context(), code, oauth2.VerifierOption(verifier))
+	upstreamContext := s.withOIDCClient(r.Context())
+	token, err := s.oauthConfig.Exchange(upstreamContext, code, oauth2.VerifierOption(verifier))
 	if err != nil {
 		return fmt.Errorf("exchange oidc authorization code: %w", err)
 	}
@@ -201,7 +218,7 @@ func (s *Service) Callback(w http.ResponseWriter, r *http.Request) error {
 	if !ok || rawIDToken == "" {
 		return fmt.Errorf("%w: provider did not return an id_token", ErrInvalidRequest)
 	}
-	idToken, err := s.verifier.Verify(r.Context(), rawIDToken)
+	idToken, err := s.verifier.Verify(upstreamContext, rawIDToken)
 	if err != nil {
 		return fmt.Errorf("verify oidc id_token: %w", err)
 	}
@@ -306,4 +323,158 @@ func randomToken(size int) (string, error) {
 		return "", fmt.Errorf("generate authentication value: %w", err)
 	}
 	return base64.RawURLEncoding.EncodeToString(value), nil
+}
+
+// authorityRoutingTransport keeps the provider's public URLs in discovery and
+// ID-token validation while routing server-to-server calls to the configured
+// backchannel authority. The transport only rewrites requests whose scheme,
+// host, and authority path match the public authority.
+type authorityRoutingTransport struct {
+	base        http.RoundTripper
+	public      *url.URL
+	backchannel *url.URL
+}
+
+func newOIDCHTTPClient(cfg config.OIDCConfig) (*http.Client, *url.URL, *url.URL, error) {
+	public, err := parseAuthority(cfg.Authority, "oidc.authority")
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	if strings.TrimSpace(cfg.BackchannelAuthority) == "" {
+		return nil, public, nil, nil
+	}
+	backchannel, err := parseAuthority(cfg.BackchannelAuthority, "oidc.backchannel_authority")
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	return &http.Client{Transport: &authorityRoutingTransport{
+		base:        http.DefaultTransport,
+		public:      public,
+		backchannel: backchannel,
+	}}, public, backchannel, nil
+}
+
+func parseAuthority(raw, field string) (*url.URL, error) {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed.Scheme == "" || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return nil, fmt.Errorf("%s must be an absolute http or https URL", field)
+	}
+	return parsed, nil
+}
+
+func withOIDCHTTPClient(ctx context.Context, client *http.Client) context.Context {
+	if client == nil {
+		return ctx
+	}
+	return oidc.ClientContext(ctx, client)
+}
+
+func (s *Service) withOIDCClient(ctx context.Context) context.Context {
+	if s == nil {
+		return ctx
+	}
+	return withOIDCHTTPClient(ctx, s.httpClient)
+}
+
+func (s *Service) publicEndpoint(raw string) string {
+	if s == nil || s.publicAuthority == nil || s.backchannelAuthority == nil {
+		return raw
+	}
+	rewritten, ok := rewriteAuthorityURL(raw, s.backchannelAuthority, s.publicAuthority)
+	if !ok {
+		return raw
+	}
+	return rewritten
+}
+
+func (t *authorityRoutingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if t == nil {
+		return http.DefaultTransport.RoundTrip(req)
+	}
+	base := t.base
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	target, ok := rewriteAuthority(req.URL, t.public, t.backchannel)
+	if !ok {
+		return base.RoundTrip(req)
+	}
+	clone := req.Clone(req.Context())
+	clone.URL = target
+	if req.Host != "" && strings.EqualFold(req.Host, t.public.Host) {
+		clone.Host = target.Host
+	}
+	return base.RoundTrip(clone)
+}
+
+func rewriteAuthorityURL(raw string, from, to *url.URL) (string, bool) {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return raw, false
+	}
+	rewritten, ok := rewriteAuthority(parsed, from, to)
+	if !ok {
+		return raw, false
+	}
+	return rewritten.String(), true
+}
+
+func rewriteAuthority(endpoint, from, to *url.URL) (*url.URL, bool) {
+	if endpoint == nil || from == nil || to == nil || !sameAuthority(endpoint, from) {
+		return nil, false
+	}
+	suffix, ok := authorityPathSuffix(endpoint.EscapedPath(), from.EscapedPath())
+	if !ok {
+		return nil, false
+	}
+	rewrittenPath := joinAuthorityPath(to.EscapedPath(), suffix)
+	decodedPath, err := url.PathUnescape(rewrittenPath)
+	if err != nil {
+		return nil, false
+	}
+	rewritten := *endpoint
+	rewritten.Scheme = to.Scheme
+	rewritten.Host = to.Host
+	rewritten.User = to.User
+	rewritten.Path = decodedPath
+	rewritten.RawPath = rewrittenPath
+	return &rewritten, true
+}
+
+func sameAuthority(left, right *url.URL) bool {
+	return left != nil && right != nil && strings.EqualFold(left.Scheme, right.Scheme) && strings.EqualFold(left.Host, right.Host)
+}
+
+func authorityPathSuffix(path, prefix string) (string, bool) {
+	prefix = strings.TrimRight(prefix, "/")
+	if prefix == "" {
+		return path, true
+	}
+	if path == prefix {
+		return "", true
+	}
+	if strings.HasPrefix(path, prefix+"/") {
+		return strings.TrimPrefix(path, prefix), true
+	}
+	return "", false
+}
+
+func joinAuthorityPath(prefix, suffix string) string {
+	prefix = strings.TrimRight(prefix, "/")
+	if prefix == "" {
+		if suffix == "" {
+			return ""
+		}
+		if strings.HasPrefix(suffix, "/") {
+			return suffix
+		}
+		return "/" + suffix
+	}
+	if suffix == "" {
+		return prefix
+	}
+	if strings.HasPrefix(suffix, "/") {
+		return prefix + suffix
+	}
+	return prefix + "/" + suffix
 }

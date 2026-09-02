@@ -11,8 +11,74 @@ services:
       test: ["CMD-SHELL", "pg_isready -U postgres -d permission_center"]
       interval: 5s
       timeout: 5s
-      retries: 10
+      retries: 20
+      start_period: 5s
     volumes:
       - permission-center-data:/var/lib/postgresql/data
+    restart: unless-stopped
+
+  migrate:
+    build:
+      context: .
+      target: migrator
+    environment:
+      PERMISSION_CENTER_DATABASE_URL: postgres://postgres:postgres@postgres:5432/permission_center?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  permission-api:
+    build:
+      context: .
+      target: api
+    environment:
+      PERMISSION_CENTER_HTTP_ADDR: :8080
+      PERMISSION_CENTER_DATABASE_URL: postgres://postgres:postgres@postgres:5432/permission_center?sslmode=disable
+      PERMISSION_CENTER_OIDC_ENABLED: ${PERMISSION_CENTER_OIDC_ENABLED:-false}
+      PERMISSION_CENTER_OIDC_AUTHORITY: ${PERMISSION_CENTER_OIDC_AUTHORITY:-http://localhost:5100}
+      PERMISSION_CENTER_OIDC_BACKCHANNEL_AUTHORITY: ${PERMISSION_CENTER_OIDC_BACKCHANNEL_AUTHORITY:-http://host.docker.internal:5100}
+      PERMISSION_CENTER_OIDC_CLIENT_ID: ${PERMISSION_CENTER_OIDC_CLIENT_ID:-permission-center-api}
+      PERMISSION_CENTER_OIDC_CLIENT_SECRET: ${PERMISSION_CENTER_OIDC_CLIENT_SECRET:-}
+      PERMISSION_CENTER_OIDC_REDIRECT_URI: ${PERMISSION_CENTER_OIDC_REDIRECT_URI:-http://localhost:8080/signin-oidc}
+      PERMISSION_CENTER_OIDC_POST_LOGOUT_REDIRECT_URI: ${PERMISSION_CENTER_OIDC_POST_LOGOUT_REDIRECT_URI:-http://localhost:5274/}
+      PERMISSION_CENTER_OIDC_SCOPES: ${PERMISSION_CENTER_OIDC_SCOPES:-openid,profile,email,offline_access,permission-center-api}
+      PERMISSION_CENTER_OIDC_AUDIENCE: ${PERMISSION_CENTER_OIDC_AUDIENCE:-permission-center-api}
+      PERMISSION_CENTER_OIDC_SESSION_SECRET: ${PERMISSION_CENTER_OIDC_SESSION_SECRET:-replace-with-at-least-32-random-characters}
+      PERMISSION_CENTER_OIDC_COOKIE_SECURE: ${PERMISSION_CENTER_OIDC_COOKIE_SECURE:-false}
+      PERMISSION_CENTER_OIDC_COOKIE_NAME: ${PERMISSION_CENTER_OIDC_COOKIE_NAME:-permission_center_session}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - "8080:8080"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1:8080/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context: ./dashboard
+      args:
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
+    depends_on:
+      permission-api:
+        condition: service_healthy
+    ports:
+      - "5274:80"
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--spider", "http://127.0.0.1/"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
 volumes:
   permission-center-data:

@@ -49,7 +49,7 @@
 
 本地 NexusAuth 的 Authority 为 `http://localhost:5100`。实现与 NexusAuth Workbench 的 BFF 模式一致：NexusAuth 直连 Go 后端回调地址，后端建立加密会话后跳转到 `http://localhost:5274/auth/callback`。服务从 OIDC discovery 文档自动读取统一登出端点 `http://localhost:5100/connect/endsession`；浏览器点击“退出登录”后，后端先清除权限中心会话，再携带 `id_token_hint` 和上述登出回跳地址跳转至该端点。
 
-修改 `configs/app.yaml` 中的 `oidc` 配置，生成独立的随机 `session_secret`，最后设置 `enabled: true`。对应环境变量均以 `PERMISSION_CENTER_OIDC_` 开头，例如 `CLIENT_ID`、`CLIENT_SECRET`、`SCOPES` 和 `SESSION_SECRET`。
+修改 `configs/app.yaml` 中的 `oidc` 配置，生成独立的随机 `session_secret`，最后设置 `enabled: true`。对应环境变量均以 `PERMISSION_CENTER_OIDC_` 开头，例如 `CLIENT_ID`、`CLIENT_SECRET`、`SCOPES` 和 `SESSION_SECRET`。容器部署时，`BACKCHANNEL_AUTHORITY` 用于服务端 discovery、Token 和 JWKS 请求，浏览器跳转仍使用公开的 `AUTHORITY`。
 
 `oidc.enabled=false` 仅用于尚未注册 NexusAuth 客户端时的本地开发，此时 API 会绕过登录保护。
 
@@ -72,13 +72,20 @@ curl -X POST http://localhost:8080/v1/resources \
 ## Run
 
 ```sh
-docker compose up -d postgres
-./scripts/migrate.sh
-go run ./cmd/api-server
-
-cd dashboard
-yarn install
-yarn dev
+docker compose up -d --build
 ```
 
-访问 `http://localhost:5274/`。可用 `PERMISSION_CENTER_DATABASE_URL` 和 `PERMISSION_CENTER_HTTP_ADDR` 覆盖数据库及监听配置。本项目不使用消息队列，授权变更直接通过事务写入 PostgreSQL。
+Compose 会依次启动 PostgreSQL、执行数据库迁移、启动 Go API 和 Nginx Dashboard。前后端均使用镜像内构建产物，不挂载宿主机源码；数据库数据保存在 Docker named volume `permission-center-data` 中。
+
+启用统一登录时，在项目根目录创建不提交到 Git 的 `.env`：
+
+```dotenv
+PERMISSION_CENTER_OIDC_ENABLED=true
+PERMISSION_CENTER_OIDC_AUTHORITY=http://localhost:5100
+PERMISSION_CENTER_OIDC_BACKCHANNEL_AUTHORITY=http://host.docker.internal:5100
+PERMISSION_CENTER_OIDC_CLIENT_ID=permission-center-api
+PERMISSION_CENTER_OIDC_CLIENT_SECRET=<client-secret>
+PERMISSION_CENTER_OIDC_SESSION_SECRET=<至少32字符的随机值>
+```
+
+访问 `http://localhost:5274/`，API 为 `http://localhost:8080`，PostgreSQL 宿主机端口为 `55433`。本项目不使用消息队列，授权变更直接通过事务写入 PostgreSQL。

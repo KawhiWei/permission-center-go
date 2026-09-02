@@ -7,6 +7,7 @@ database:
 oidc:
   enabled: false
   authority: "http://localhost:5100"
+  backchannel_authority: ""
   client_id: "permission-center-api"
   client_secret: "replace-with-client-secret"
   redirect_uri: "http://localhost:8080/signin-oidc"
