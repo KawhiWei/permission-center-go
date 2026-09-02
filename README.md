@@ -4,25 +4,25 @@
 
 ## 模型
 
-- `application`：不是表，也不是可管理的实体。它只是 `roles` 和 `resources` 表上的字符串标识字段，例如 `admin-console`，用于隔离数据。
+- `application`：不是表，也不是可管理的实体。它只是 `roles` 和 `menus` 表上的字符串标识字段，例如 `admin-console`，用于隔离数据。
 - `role`：角色 ID 使用 `VARCHAR(80)` 字符串，角色编码在同一 `application` 内唯一。
-- `resource`：同一 `application` 内的权限资源树。`type=menu` 用于导航节点；`type=button` 用于页面操作，必须挂在菜单下，并提供受保护的 `api_path`（可选 `http_method`）。资源编码在同一应用内唯一。
-- `role_resource`：角色和资源的多对多授权关系。一次 `PUT` 会在单一事务中全量替换该角色的授权集。
-- `user_role`：NexusAuth 用户 `sub` 与角色的多对多关系。`subject` 和 `role_id` 均为 `VARCHAR(80)`；不在本服务复制用户表。分配角色时按应用全量替换，其他应用的角色保持不变。
+- `menu`：同一 `application` 内的菜单与按钮树。`type=menu` 用于导航节点；`type=button` 用于页面操作，必须挂在菜单下，并提供受保护的 `api_path`（可选 `http_method`）。菜单项编码在同一应用内唯一。
+- `role_menus`：角色和菜单项的多对多授权关系。一次 `PUT` 会在单一事务中全量替换该角色的授权集。
+- `user_roles`：NexusAuth 用户 `sub` 与角色的多对多关系。`subject` 和 `role_id` 均为 `VARCHAR(80)`；不在本服务复制用户表。分配角色时按应用全量替换，其他应用的角色保持不变。
 
 四张 RBAC 表统一使用公共审计字段：`created_by_id`、`created_by_name`、`created_at`、`updated_by_id`、`updated_by_name`、`updated_at`、`is_deleted`。创建人与修改人由后端从 NexusAuth 会话读取，接口不接受客户端传入审计身份；OIDC 关闭时记录为 `development / 开发模式`。删除及关联关系替换均使用 `is_deleted` 软删除，查询只返回未删除数据。
 
-应用隔离是最重要的约束：角色不能关联其他应用的资源，资源父节点也不能跨应用。资源和授权在查询时按 `sort, created_at` 保持稳定顺序。
+应用隔离是最重要的约束：角色不能关联其他应用的菜单项，菜单父节点也不能跨应用。菜单树和授权在查询时按 `sort, created_at` 保持稳定顺序。当前 `menu` 模型只负责 RBAC 菜单与按钮管理；后续完整 PDP 鉴权将另建 `resource` / `policy` 模型，不复用菜单表。
 
 ## API
 
 | Method | Path | Purpose |
 | --- | --- | --- |
 | POST/GET | `/v1/roles` | 创建角色、按 `application` 查询角色 |
-| POST | `/v1/resources` | 创建菜单或按钮资源 |
-| GET | `/v1/resources/tree` | 按 `application` 获取资源树 |
-| PUT | `/v1/roles/{roleID}/resources` | 全量替换角色资源授权 |
-| GET | `/v1/roles/{roleID}/resources` | 获取角色拥有的资源 ID |
+| POST | `/v1/menus` | 创建菜单或按钮 |
+| GET | `/v1/menus/tree` | 按 `application` 获取菜单树 |
+| PUT | `/v1/roles/{roleID}/menus` | 全量替换角色菜单授权 |
+| GET | `/v1/roles/{roleID}/menus` | 获取角色拥有的菜单 ID |
 | PUT | `/v1/users/{userID}/roles?application={application}` | 全量替换该 NexusAuth 用户在指定应用的角色 |
 | GET | `/v1/users/{userID}/roles?application={application}` | 获取该用户在指定应用的角色 ID |
 
@@ -60,11 +60,11 @@ curl -X POST http://localhost:8080/v1/roles \
   -H 'Content-Type: application/json' \
   -d '{"application":"admin-console","code":"operator","name":"运营人员"}'
 
-curl -X POST http://localhost:8080/v1/resources \
+curl -X POST http://localhost:8080/v1/menus \
   -H 'Content-Type: application/json' \
   -d '{"application":"admin-console","code":"system:user","name":"用户管理","type":"menu","path":"/system/users","sort":10}'
 
-curl -X POST http://localhost:8080/v1/resources \
+curl -X POST http://localhost:8080/v1/menus \
   -H 'Content-Type: application/json' \
   -d '{"application":"admin-console","parent_id":"'$MENU_ID'","code":"system:user:create","name":"新增用户","type":"button","api_path":"/api/users","http_method":"POST"}'
 ```

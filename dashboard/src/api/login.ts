@@ -1,9 +1,9 @@
 import request from './request';
 
 export interface UserInfo {
-	id?: string;
-	sub: string;
-  name: string;
+  sub: string;
+  name?: string;
+  email?: string;
 }
 
 export interface LoginResponse {
@@ -12,7 +12,6 @@ export interface LoginResponse {
 }
 
 export interface ConfigResponse {
-  enabled: boolean;
   authority: string;
   clientId: string;
 }

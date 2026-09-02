@@ -10,9 +10,13 @@ import (
 )
 
 type Config struct {
-	HTTP     HTTPConfig     `yaml:"http"`
-	Database DatabaseConfig `yaml:"database"`
-	OIDC     OIDCConfig     `yaml:"oidc"`
+	HTTP               HTTPConfig               `yaml:"http"`
+	Database           DatabaseConfig           `yaml:"database"`
+	OIDC               OIDCConfig               `yaml:"oidc"`
+	ApplicationCatalog ApplicationCatalogConfig `yaml:"application_catalog"`
+}
+type ApplicationCatalogConfig struct {
+	Source string `yaml:"source"`
 }
 type HTTPConfig struct {
 	Addr string `yaml:"addr"`
@@ -56,6 +60,15 @@ func Load(path string) (*Config, error) {
 		cfg.HTTP.Addr = value
 	}
 	applyOIDCEnv(&cfg.OIDC)
+	if value := os.Getenv("PERMISSION_CENTER_APPLICATION_CATALOG_SOURCE"); value != "" {
+		cfg.ApplicationCatalog.Source = value
+	}
+	if cfg.ApplicationCatalog.Source == "" {
+		cfg.ApplicationCatalog.Source = "local"
+	}
+	if cfg.ApplicationCatalog.Source != "local" && cfg.ApplicationCatalog.Source != "nexusauth" {
+		return nil, fmt.Errorf("application_catalog.source must be local or nexusauth")
+	}
 	if len(cfg.OIDC.Scopes) == 0 {
 		cfg.OIDC.Scopes = []string{"openid", "profile", "email"}
 	}

@@ -28,7 +28,7 @@ func main() {
 	server := &http.Server{
 		Addr: cfg.HTTP.Addr,
 		Handler: httpserver.NewServer(
-			httpserver.NewHandler(application.Permissions, application.Auth),
+			httpserver.NewHandler(application.Permissions, application.Auth).WithApplications(application.Applications),
 			application.Auth.Middleware,
 		),
 	}

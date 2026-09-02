@@ -11,16 +11,12 @@ const BrandComponent = ({ className, compact = false }: BrandComponentProps) => 
     .join(' ');
 
   return (
-    <div className={classes} aria-label="NexusAuth 权限中心">
-      <img
-        className="brand__mark"
-        src="/brand/nexusauth-logo.svg"
-        alt={compact ? 'NexusAuth' : ''}
-      />
+    <div className={classes} aria-label="权限中心">
+      <span className="brand__mark" aria-hidden="true">PC</span>
       {!compact && (
         <span className="brand__copy">
-          <span className="brand__name">NexusAuth</span>
-          <span className="brand__product">权限中心</span>
+          <span className="brand__name">权限中心</span>
+          <span className="brand__product">PERMISSION CENTER</span>
         </span>
       )}
     </div>

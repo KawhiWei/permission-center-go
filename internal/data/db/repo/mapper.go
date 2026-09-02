@@ -29,11 +29,11 @@ func toBizRole(value *model.Role) *biz.Role {
 	return result
 }
 
-func toBizResource(value *model.Resource) *biz.Resource {
+func toBizMenu(value *model.Menu) *biz.Menu {
 	if value == nil {
 		return nil
 	}
-	result := &biz.Resource{
+	result := &biz.Menu{
 		BaseFields: biz.BaseFields{
 			CreatedByID:   value.CreatedByID,
 			CreatedByName: value.CreatedByName,
@@ -48,7 +48,7 @@ func toBizResource(value *model.Resource) *biz.Resource {
 		Code:        value.Code,
 		Name:        value.Name,
 		Description: value.Description,
-		Type:        biz.ResourceType(value.Type),
+		Type:        biz.MenuType(value.Type),
 		Path:        value.Path,
 		Component:   value.Component,
 		APIPath:     value.APIPath,

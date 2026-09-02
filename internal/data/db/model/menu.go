@@ -2,16 +2,16 @@ package model
 
 import "github.com/google/uuid"
 
-type ResourceType string
+type MenuType string
 
 const (
-	ResourceTypeMenu   ResourceType = "menu"
-	ResourceTypeButton ResourceType = "button"
+	MenuTypeMenu   MenuType = "menu"
+	MenuTypeButton MenuType = "button"
 )
 
-// Resource is a node in an application's menu/button tree. A nil ParentID
+// Menu is a node in an application's menu/button tree. A nil ParentID
 // denotes a root menu; button roots are rejected by the database constraint.
-type Resource struct {
+type Menu struct {
 	BaseFields
 	ID          uuid.UUID
 	Application string
@@ -19,7 +19,7 @@ type Resource struct {
 	Code        string
 	Name        string
 	Description string
-	Type        ResourceType
+	Type        MenuType
 	Path        string
 	Component   string
 	APIPath     string

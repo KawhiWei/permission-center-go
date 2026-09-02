@@ -12,9 +12,10 @@ import (
 )
 
 type Application struct {
-	Pool        *pgxpool.Pool
-	Permissions *biz.PermissionService
-	Auth        *auth.Service
+	Pool         *pgxpool.Pool
+	Permissions  *biz.PermissionService
+	Applications *biz.ApplicationService
+	Auth         *auth.Service
 }
 
 func New(ctx context.Context, cfg *config.Config) (*Application, error) {
@@ -23,14 +24,16 @@ func New(ctx context.Context, cfg *config.Config) (*Application, error) {
 		return nil, err
 	}
 	roles := repo.NewRoleRepository(pool)
-	resources := repo.NewResourceRepository(pool)
+	menus := repo.NewMenuRepository(pool)
 	userRoles := repo.NewUserRoleRepository(pool)
+	applications := repo.NewApplicationRepository(pool)
 	authenticator, err := auth.New(ctx, cfg.OIDC)
 	if err != nil {
 		pool.Close()
 		return nil, err
 	}
-	return &Application{Pool: pool, Permissions: biz.NewPermissionService(roles, resources, userRoles), Auth: authenticator}, nil
+	permissions := biz.NewPermissionService(roles, menus, userRoles).WithApplicationRepository(applications)
+	return &Application{Pool: pool, Permissions: permissions, Applications: biz.NewApplicationService(applications, cfg.ApplicationCatalog.Source), Auth: authenticator}, nil
 }
 
 func (a *Application) Close() {

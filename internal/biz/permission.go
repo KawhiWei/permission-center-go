@@ -8,11 +8,11 @@ import (
 	"github.com/google/uuid"
 )
 
-type ResourceType string
+type MenuType string
 
 const (
-	ResourceTypeMenu   ResourceType = "menu"
-	ResourceTypeButton ResourceType = "button"
+	MenuTypeMenu   MenuType = "menu"
+	MenuTypeButton MenuType = "button"
 )
 
 type Role struct {
@@ -25,42 +25,42 @@ type Role struct {
 	Enabled     bool
 }
 
-// Resource represents a navigational menu or an operation button. ParentID is nil for roots.
-type Resource struct {
+// Menu represents a navigational menu or an operation button. ParentID is nil for roots.
+type Menu struct {
 	BaseFields
-	ID          uuid.UUID
-	Application string
-	ParentID    *uuid.UUID
-	Code        string
-	Name        string
-	Description string
-	Type        ResourceType
-	Path        string
-	Component   string
-	APIPath     string
-	HTTPMethod  string
-	Icon        string
-	Sort        int
-	Enabled     bool
+	ID          uuid.UUID  `json:"id"`
+	Application string     `json:"application"`
+	ParentID    *uuid.UUID `json:"parent_id"`
+	Code        string     `json:"code"`
+	Name        string     `json:"name"`
+	Description string     `json:"description"`
+	Type        MenuType   `json:"type"`
+	Path        string     `json:"path"`
+	Component   string     `json:"component"`
+	APIPath     string     `json:"api_path"`
+	HTTPMethod  string     `json:"http_method"`
+	Icon        string     `json:"icon"`
+	Sort        int        `json:"sort"`
+	Enabled     bool       `json:"enabled"`
 }
 
-type ResourceTreeNode struct {
-	Resource
-	Children []*ResourceTreeNode
+type MenuTreeNode struct {
+	Menu
+	Children []*MenuTreeNode `json:"children"`
 }
 
 type RoleRepository interface {
 	Create(context.Context, *Role) (*Role, error)
 	Get(context.Context, string) (*Role, error)
 	ListByApplication(context.Context, string) ([]*Role, error)
-	ReplaceResources(context.Context, string, []uuid.UUID) error
-	ResourceIDs(context.Context, string) ([]uuid.UUID, error)
+	ReplaceMenus(context.Context, string, []uuid.UUID) error
+	MenuIDs(context.Context, string) ([]uuid.UUID, error)
 }
 
-type ResourceRepository interface {
-	Create(context.Context, *Resource) (*Resource, error)
-	Get(context.Context, uuid.UUID) (*Resource, error)
-	ListByApplication(context.Context, string) ([]*Resource, error)
+type MenuRepository interface {
+	Create(context.Context, *Menu) (*Menu, error)
+	Get(context.Context, uuid.UUID) (*Menu, error)
+	ListByApplication(context.Context, string) ([]*Menu, error)
 }
 
 // UserRoleRepository associates the external OIDC subject with application-scoped roles.
@@ -71,13 +71,35 @@ type UserRoleRepository interface {
 }
 
 type PermissionService struct {
-	roles     RoleRepository
-	resources ResourceRepository
-	userRoles UserRoleRepository
+	roles        RoleRepository
+	menus        MenuRepository
+	userRoles    UserRoleRepository
+	applications ApplicationRepository
 }
 
-func NewPermissionService(roles RoleRepository, resources ResourceRepository, userRoles ...UserRoleRepository) *PermissionService {
-	service := &PermissionService{roles: roles, resources: resources}
+// WithApplicationRepository enables application existence checks without
+// breaking callers that intentionally use an externally managed catalog.
+func (s *PermissionService) WithApplicationRepository(applications ApplicationRepository) *PermissionService {
+	s.applications = applications
+	return s
+}
+
+func (s *PermissionService) ensureApplication(ctx context.Context, application string) error {
+	if s.applications == nil {
+		return nil
+	}
+	value, err := s.applications.Get(ctx, application)
+	if err != nil {
+		return err
+	}
+	if !value.Enabled {
+		return fmt.Errorf("%w: application is disabled", ErrConflict)
+	}
+	return nil
+}
+
+func NewPermissionService(roles RoleRepository, menus MenuRepository, userRoles ...UserRoleRepository) *PermissionService {
+	service := &PermissionService{roles: roles, menus: menus}
 	if len(userRoles) > 0 {
 		service.userRoles = userRoles[0]
 	}
@@ -87,6 +109,9 @@ func NewPermissionService(roles RoleRepository, resources ResourceRepository, us
 func (s *PermissionService) CreateRole(ctx context.Context, application, code, name, description string) (*Role, error) {
 	application, err := validateApplication(application)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.ensureApplication(ctx, application); err != nil {
 		return nil, err
 	}
 	code, name, err = validateCodeAndName(code, name)
@@ -104,67 +129,70 @@ func (s *PermissionService) ListRoles(ctx context.Context, application string) (
 	return s.roles.ListByApplication(ctx, application)
 }
 
-func (s *PermissionService) CreateResource(ctx context.Context, resource *Resource) (*Resource, error) {
-	if resource == nil {
-		return nil, fmt.Errorf("%w: resource is required", ErrInvalidArgument)
+func (s *PermissionService) CreateMenu(ctx context.Context, menu *Menu) (*Menu, error) {
+	if menu == nil {
+		return nil, fmt.Errorf("%w: menu is required", ErrInvalidArgument)
 	}
-	application, err := validateApplication(resource.Application)
+	application, err := validateApplication(menu.Application)
 	if err != nil {
 		return nil, err
 	}
-	resource.Application = application
-	code, name, err := validateCodeAndName(resource.Code, resource.Name)
+	menu.Application = application
+	if err := s.ensureApplication(ctx, application); err != nil {
+		return nil, err
+	}
+	code, name, err := validateCodeAndName(menu.Code, menu.Name)
 	if err != nil {
 		return nil, err
 	}
-	resource.Code, resource.Name = code, name
-	if err := validateResource(resource); err != nil {
+	menu.Code, menu.Name = code, name
+	if err := validateMenu(menu); err != nil {
 		return nil, err
 	}
-	if resource.ParentID != nil {
-		parent, err := s.resources.Get(ctx, *resource.ParentID)
+	if menu.ParentID != nil {
+		parent, err := s.menus.Get(ctx, *menu.ParentID)
 		if err != nil {
 			return nil, err
 		}
-		if parent.Application != resource.Application || parent.Type != ResourceTypeMenu {
+		if parent.Application != menu.Application || parent.Type != MenuTypeMenu {
 			return nil, fmt.Errorf("%w: parent must be a menu in the same application", ErrConflict)
 		}
 	}
-	resource.Enabled = true
-	resource.BaseFields = NewBaseFields(AuditActorFromContext(ctx))
-	return s.resources.Create(ctx, resource)
+	menu.Enabled = true
+	menu.BaseFields = NewBaseFields(AuditActorFromContext(ctx))
+	return s.menus.Create(ctx, menu)
 }
 
-func (s *PermissionService) ResourceTree(ctx context.Context, application string) ([]*ResourceTreeNode, error) {
+func (s *PermissionService) MenuTree(ctx context.Context, application string) ([]*MenuTreeNode, error) {
 	application, err := validateApplication(application)
 	if err != nil {
 		return nil, err
 	}
-	resources, err := s.resources.ListByApplication(ctx, application)
+	menus, err := s.menus.ListByApplication(ctx, application)
 	if err != nil {
 		return nil, err
 	}
-	nodes := make(map[uuid.UUID]*ResourceTreeNode, len(resources))
-	for _, resource := range resources {
-		nodes[resource.ID] = &ResourceTreeNode{Resource: *resource}
+	nodes := make(map[uuid.UUID]*MenuTreeNode, len(menus))
+	for _, menu := range menus {
+		nodes[menu.ID] = &MenuTreeNode{Menu: *menu}
 	}
-	roots := make([]*ResourceTreeNode, 0)
-	for _, resource := range resources {
-		node := nodes[resource.ID]
-		if resource.ParentID == nil {
+	roots := make([]*MenuTreeNode, 0)
+	for _, menu := range menus {
+		node := nodes[menu.ID]
+		if menu.ParentID == nil {
 			roots = append(roots, node)
 			continue
 		}
-		parent, ok := nodes[*resource.ParentID]
+		parent, ok := nodes[*menu.ParentID]
 		if !ok {
-			return nil, fmt.Errorf("%w: resource parent does not belong to application", ErrConflict)
+			return nil, fmt.Errorf("%w: menu parent does not belong to application", ErrConflict)
 		}
 		parent.Children = append(parent.Children, node)
 	}
 	return roots, nil
 }
 
-func (s *PermissionService) GrantRoleResources(ctx context.Context, roleID string, resourceIDs []uuid.UUID) error {
+func (s *PermissionService) GrantRoleMenus(ctx context.Context, roleID string, menuIDs []uuid.UUID) error {
 	roleID, err := validateID(roleID, "role_id")
 	if err != nil {
 		return err
@@ -173,27 +201,27 @@ func (s *PermissionService) GrantRoleResources(ctx context.Context, roleID strin
 	if err != nil {
 		return err
 	}
-	seen := make(map[uuid.UUID]struct{}, len(resourceIDs))
-	for _, resourceID := range resourceIDs {
-		if resourceID == uuid.Nil {
-			return fmt.Errorf("%w: resource_id is required", ErrInvalidArgument)
+	seen := make(map[uuid.UUID]struct{}, len(menuIDs))
+	for _, menuID := range menuIDs {
+		if menuID == uuid.Nil {
+			return fmt.Errorf("%w: menu_id is required", ErrInvalidArgument)
 		}
-		if _, ok := seen[resourceID]; ok {
-			return fmt.Errorf("%w: duplicate resource_id", ErrInvalidArgument)
+		if _, ok := seen[menuID]; ok {
+			return fmt.Errorf("%w: duplicate menu_id", ErrInvalidArgument)
 		}
-		seen[resourceID] = struct{}{}
-		resource, err := s.resources.Get(ctx, resourceID)
+		seen[menuID] = struct{}{}
+		menu, err := s.menus.Get(ctx, menuID)
 		if err != nil {
 			return err
 		}
-		if resource.Application != role.Application {
-			return fmt.Errorf("%w: role and resource must belong to the same application", ErrConflict)
+		if menu.Application != role.Application {
+			return fmt.Errorf("%w: role and menu must belong to the same application", ErrConflict)
 		}
 	}
-	return s.roles.ReplaceResources(ctx, roleID, resourceIDs)
+	return s.roles.ReplaceMenus(ctx, roleID, menuIDs)
 }
 
-func (s *PermissionService) RoleResources(ctx context.Context, roleID string) ([]uuid.UUID, error) {
+func (s *PermissionService) RoleMenus(ctx context.Context, roleID string) ([]uuid.UUID, error) {
 	roleID, err := validateID(roleID, "role_id")
 	if err != nil {
 		return nil, err
@@ -201,7 +229,7 @@ func (s *PermissionService) RoleResources(ctx context.Context, roleID string) ([
 	if _, err := s.roles.Get(ctx, roleID); err != nil {
 		return nil, err
 	}
-	return s.roles.ResourceIDs(ctx, roleID)
+	return s.roles.MenuIDs(ctx, roleID)
 }
 
 // ReplaceUserRoles atomically replaces one user's roles in an application only.
@@ -275,22 +303,22 @@ func validateID(value, name string) (string, error) {
 	return value, nil
 }
 
-func validateResource(resource *Resource) error {
-	code, name, err := validateCodeAndName(resource.Code, resource.Name)
+func validateMenu(menu *Menu) error {
+	code, name, err := validateCodeAndName(menu.Code, menu.Name)
 	if err != nil {
 		return err
 	}
-	resource.Code, resource.Name = code, name
-	if resource.Type != ResourceTypeMenu && resource.Type != ResourceTypeButton {
+	menu.Code, menu.Name = code, name
+	if menu.Type != MenuTypeMenu && menu.Type != MenuTypeButton {
 		return fmt.Errorf("%w: type must be menu or button", ErrInvalidArgument)
 	}
-	if resource.Type == ResourceTypeButton && resource.ParentID == nil {
+	if menu.Type == MenuTypeButton && menu.ParentID == nil {
 		return fmt.Errorf("%w: button must have a menu parent", ErrInvalidArgument)
 	}
-	if resource.Type == ResourceTypeMenu && resource.APIPath != "" {
+	if menu.Type == MenuTypeMenu && menu.APIPath != "" {
 		return fmt.Errorf("%w: menu cannot define api_path", ErrInvalidArgument)
 	}
-	if resource.Type == ResourceTypeButton && strings.TrimSpace(resource.APIPath) == "" {
+	if menu.Type == MenuTypeButton && strings.TrimSpace(menu.APIPath) == "" {
 		return fmt.Errorf("%w: button api_path is required", ErrInvalidArgument)
 	}
 	return nil

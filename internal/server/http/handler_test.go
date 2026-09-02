@@ -13,7 +13,10 @@ import (
 	"github.com/luck/permission-center-go/internal/config"
 )
 
-type testRoleRepo struct{ values map[string]*biz.Role }
+type testRoleRepo struct {
+	values  map[string]*biz.Role
+	menuIDs []uuid.UUID
+}
 
 func (r *testRoleRepo) Create(_ context.Context, value *biz.Role) (*biz.Role, error) {
 	value.ID = "role-test"
@@ -28,10 +31,17 @@ func (r *testRoleRepo) Get(_ context.Context, id string) (*biz.Role, error) {
 	return value, nil
 }
 func (*testRoleRepo) ListByApplication(context.Context, string) ([]*biz.Role, error) { return nil, nil }
-func (*testRoleRepo) ReplaceResources(context.Context, string, []uuid.UUID) error    { return nil }
-func (*testRoleRepo) ResourceIDs(context.Context, string) ([]uuid.UUID, error)       { return nil, nil }
+func (r *testRoleRepo) ReplaceMenus(_ context.Context, _ string, menuIDs []uuid.UUID) error {
+	r.menuIDs = append([]uuid.UUID(nil), menuIDs...)
+	return nil
+}
+func (r *testRoleRepo) MenuIDs(context.Context, string) ([]uuid.UUID, error) {
+	return append([]uuid.UUID(nil), r.menuIDs...), nil
+}
 
-type testResourceRepo struct{}
+type testMenuRepo struct {
+	values map[uuid.UUID]*biz.Menu
+}
 
 type testUserRoleRepo struct {
 	subject string
@@ -47,19 +57,36 @@ func (r *testUserRoleRepo) RoleIDs(context.Context, string, string) ([]string, e
 	return nil, nil
 }
 
-func (*testResourceRepo) Create(context.Context, *biz.Resource) (*biz.Resource, error) {
-	return nil, nil
+func (r *testMenuRepo) Create(_ context.Context, menu *biz.Menu) (*biz.Menu, error) {
+	if r.values == nil {
+		r.values = map[uuid.UUID]*biz.Menu{}
+	}
+	if menu.ID == uuid.Nil {
+		menu.ID = uuid.New()
+	}
+	r.values[menu.ID] = menu
+	return menu, nil
 }
-func (*testResourceRepo) Get(context.Context, uuid.UUID) (*biz.Resource, error) {
-	return nil, biz.ErrNotFound
+func (r *testMenuRepo) Get(_ context.Context, id uuid.UUID) (*biz.Menu, error) {
+	menu, ok := r.values[id]
+	if !ok {
+		return nil, biz.ErrNotFound
+	}
+	return menu, nil
 }
-func (*testResourceRepo) ListByApplication(context.Context, string) ([]*biz.Resource, error) {
-	return nil, nil
+func (r *testMenuRepo) ListByApplication(_ context.Context, application string) ([]*biz.Menu, error) {
+	menus := make([]*biz.Menu, 0)
+	for _, menu := range r.values {
+		if menu.Application == application {
+			menus = append(menus, menu)
+		}
+	}
+	return menus, nil
 }
 
 func TestCreateRole(t *testing.T) {
 	roles := &testRoleRepo{values: map[string]*biz.Role{}}
-	server := NewServer(NewHandler(biz.NewPermissionService(roles, &testResourceRepo{})))
+	server := NewServer(NewHandler(biz.NewPermissionService(roles, &testMenuRepo{})))
 	req := httptest.NewRequest(http.MethodPost, "/v1/roles", strings.NewReader(`{"application":"admin","code":"operator","name":"Operator"}`))
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, req)
@@ -78,7 +105,7 @@ func TestCreateRole(t *testing.T) {
 
 func TestRejectsUnknownJSONFields(t *testing.T) {
 	roles := &testRoleRepo{values: map[string]*biz.Role{}}
-	server := NewServer(NewHandler(biz.NewPermissionService(roles, &testResourceRepo{})))
+	server := NewServer(NewHandler(biz.NewPermissionService(roles, &testMenuRepo{})))
 	request := httptest.NewRequest(http.MethodPost, "/v1/roles", strings.NewReader(`{"application":"admin","code":"operator","name":"Operator","other":true}`))
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, request)
@@ -87,14 +114,72 @@ func TestRejectsUnknownJSONFields(t *testing.T) {
 	}
 }
 
+func TestMenuEndpointsUseMenuNaming(t *testing.T) {
+	menuID := uuid.New()
+	roles := &testRoleRepo{values: map[string]*biz.Role{
+		"role-1": {ID: "role-1", Application: "admin"},
+	}}
+	menus := &testMenuRepo{values: map[uuid.UUID]*biz.Menu{
+		menuID: {ID: menuID, Application: "admin", Code: "items", Name: "Items", Type: biz.MenuTypeMenu},
+	}}
+	server := NewServer(NewHandler(biz.NewPermissionService(roles, menus)))
+
+	createRequest := httptest.NewRequest(http.MethodPost, "/v1/menus", strings.NewReader(`{"application":"admin","code":"settings","name":"Settings","type":"menu","path":"/settings"}`))
+	createResponse := httptest.NewRecorder()
+	server.ServeHTTP(createResponse, createRequest)
+	if createResponse.Code != http.StatusCreated {
+		t.Fatalf("create menu status = %d body=%s", createResponse.Code, createResponse.Body.String())
+	}
+
+	grantRequest := httptest.NewRequest(http.MethodPut, "/v1/roles/role-1/menus", strings.NewReader(`{"menu_ids":["`+menuID.String()+`"]}`))
+	grantResponse := httptest.NewRecorder()
+	server.ServeHTTP(grantResponse, grantRequest)
+	if grantResponse.Code != http.StatusOK {
+		t.Fatalf("grant menus status = %d body=%s", grantResponse.Code, grantResponse.Body.String())
+	}
+	if len(roles.menuIDs) != 1 || roles.menuIDs[0] != menuID {
+		t.Fatalf("granted menu IDs = %#v", roles.menuIDs)
+	}
+
+	roleMenusRequest := httptest.NewRequest(http.MethodGet, "/v1/roles/role-1/menus", nil)
+	roleMenusResponse := httptest.NewRecorder()
+	server.ServeHTTP(roleMenusResponse, roleMenusRequest)
+	if roleMenusResponse.Code != http.StatusOK {
+		t.Fatalf("role menus status = %d body=%s", roleMenusResponse.Code, roleMenusResponse.Body.String())
+	}
+	if !strings.Contains(roleMenusResponse.Body.String(), `"menu_ids"`) || strings.Contains(roleMenusResponse.Body.String(), `"resource_ids"`) {
+		t.Fatalf("role menus body = %s", roleMenusResponse.Body.String())
+	}
+
+	treeRequest := httptest.NewRequest(http.MethodGet, "/v1/menus/tree?application=admin", nil)
+	treeResponse := httptest.NewRecorder()
+	server.ServeHTTP(treeResponse, treeRequest)
+	if treeResponse.Code != http.StatusOK {
+		t.Fatalf("menu tree status = %d body=%s", treeResponse.Code, treeResponse.Body.String())
+	}
+	if !strings.Contains(treeResponse.Body.String(), `"type":"menu"`) ||
+		!strings.Contains(treeResponse.Body.String(), `"children"`) ||
+		strings.Contains(treeResponse.Body.String(), `"Type"`) ||
+		strings.Contains(treeResponse.Body.String(), `"Children"`) {
+		t.Fatalf("menu tree body = %s", treeResponse.Body.String())
+	}
+
+	legacyRequest := httptest.NewRequest(http.MethodGet, "/v1/resources/tree?application=admin", nil)
+	legacyResponse := httptest.NewRecorder()
+	server.ServeHTTP(legacyResponse, legacyRequest)
+	if legacyResponse.Code != http.StatusNotFound {
+		t.Fatalf("legacy resource route status = %d", legacyResponse.Code)
+	}
+}
+
 func TestReplaceUserRoles(t *testing.T) {
 	roles := &testRoleRepo{values: map[string]*biz.Role{}}
 	userRoles := &testUserRoleRepo{}
-	server := NewServer(NewHandler(biz.NewPermissionService(roles, &testResourceRepo{}, userRoles)))
+	server := NewServer(NewHandler(biz.NewPermissionService(roles, &testMenuRepo{}, userRoles)))
 	request := httptest.NewRequest(http.MethodPut, "/v1/users/nexus-user-1/roles?application=admin", strings.NewReader(`{"role_ids":["operator"]}`))
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, request)
-	if response.Code != http.StatusNoContent {
+	if response.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", response.Code, response.Body.String())
 	}
 	if userRoles.subject != "nexus-user-1" || userRoles.app != "admin" || len(userRoles.roleIDs) != 1 {
@@ -108,7 +193,7 @@ func TestDevelopmentModeInjectsAuditActor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	server := NewServer(NewHandler(biz.NewPermissionService(roles, &testResourceRepo{}), authenticator))
+	server := NewServer(NewHandler(biz.NewPermissionService(roles, &testMenuRepo{}), authenticator))
 	request := httptest.NewRequest(http.MethodPost, "/v1/roles", strings.NewReader(`{"application":"admin","code":"operator","name":"Operator"}`))
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, request)

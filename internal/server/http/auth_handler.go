@@ -97,5 +97,27 @@ func writeAuthError(w http.ResponseWriter, err error) {
 	case errors.Is(err, auth.ErrInvalidRequest), errors.Is(err, auth.ErrInvalidState), errors.Is(err, auth.ErrInvalidNonce):
 		status = http.StatusBadRequest
 	}
-	writeJSON(w, status, map[string]string{"error": err.Error()})
+	writeRawJSON(w, status, map[string]any{
+		"success":      false,
+		"errorCode":    authErrorCode(err),
+		"errorMessage": err.Error(),
+		"result":       nil,
+	})
+}
+
+func authErrorCode(err error) string {
+	switch {
+	case errors.Is(err, auth.ErrUnauthenticated):
+		return "UNAUTHENTICATED"
+	case errors.Is(err, auth.ErrDisabled):
+		return "AUTH_DISABLED"
+	case errors.Is(err, auth.ErrInvalidRequest):
+		return "INVALID_REQUEST"
+	case errors.Is(err, auth.ErrInvalidState):
+		return "INVALID_STATE"
+	case errors.Is(err, auth.ErrInvalidNonce):
+		return "INVALID_NONCE"
+	default:
+		return "AUTH_ERROR"
+	}
 }

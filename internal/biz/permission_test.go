@@ -7,7 +7,7 @@ import (
 	"github.com/google/uuid"
 )
 
-type memoryResourceRepo struct{ resources map[uuid.UUID]*Resource }
+type memoryMenuRepo struct{ menus map[uuid.UUID]*Menu }
 
 type memoryUserRoleRepo struct {
 	subject     string
@@ -25,21 +25,21 @@ func (r *memoryUserRoleRepo) RoleIDs(_ context.Context, _, _ string) ([]string, 
 	return append([]string(nil), r.roleIDs...), nil
 }
 
-func (r *memoryResourceRepo) Create(_ context.Context, resource *Resource) (*Resource, error) {
-	resource.ID = uuid.New()
-	r.resources[resource.ID] = resource
-	return resource, nil
+func (r *memoryMenuRepo) Create(_ context.Context, menu *Menu) (*Menu, error) {
+	menu.ID = uuid.New()
+	r.menus[menu.ID] = menu
+	return menu, nil
 }
-func (r *memoryResourceRepo) Get(_ context.Context, id uuid.UUID) (*Resource, error) {
-	value, ok := r.resources[id]
+func (r *memoryMenuRepo) Get(_ context.Context, id uuid.UUID) (*Menu, error) {
+	value, ok := r.menus[id]
 	if !ok {
 		return nil, ErrNotFound
 	}
 	return value, nil
 }
-func (r *memoryResourceRepo) ListByApplication(_ context.Context, application string) ([]*Resource, error) {
-	values := []*Resource{}
-	for _, value := range r.resources {
+func (r *memoryMenuRepo) ListByApplication(_ context.Context, application string) ([]*Menu, error) {
+	values := []*Menu{}
+	for _, value := range r.menus {
 		if value.Application == application {
 			values = append(values, value)
 		}
@@ -47,18 +47,18 @@ func (r *memoryResourceRepo) ListByApplication(_ context.Context, application st
 	return values, nil
 }
 
-func TestCreateResourceRejectsButtonWithoutMenuParent(t *testing.T) {
+func TestCreateMenuRejectsButtonWithoutMenuParent(t *testing.T) {
 	ctx := context.Background()
-	resources := &memoryResourceRepo{resources: map[uuid.UUID]*Resource{}}
-	service := NewPermissionService(nil, resources)
-	if _, err := service.CreateResource(ctx, &Resource{Application: "ops", Code: "create", Name: "Create", Type: ResourceTypeButton, APIPath: "/v1/items"}); err == nil {
+	menus := &memoryMenuRepo{menus: map[uuid.UUID]*Menu{}}
+	service := NewPermissionService(nil, menus)
+	if _, err := service.CreateMenu(ctx, &Menu{Application: "ops", Code: "create", Name: "Create", Type: MenuTypeButton, APIPath: "/v1/items"}); err == nil {
 		t.Fatal("expected invalid root button")
 	}
-	menu, err := service.CreateResource(ctx, &Resource{Application: "ops", Code: "items", Name: "Items", Type: ResourceTypeMenu, Path: "/items"})
+	menu, err := service.CreateMenu(ctx, &Menu{Application: "ops", Code: "items", Name: "Items", Type: MenuTypeMenu, Path: "/items"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	button, err := service.CreateResource(ctx, &Resource{Application: "ops", ParentID: &menu.ID, Code: "items:create", Name: "Create", Type: ResourceTypeButton, APIPath: "/v1/items", HTTPMethod: "POST"})
+	button, err := service.CreateMenu(ctx, &Menu{Application: "ops", ParentID: &menu.ID, Code: "items:create", Name: "Create", Type: MenuTypeButton, APIPath: "/v1/items", HTTPMethod: "POST"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,14 +67,14 @@ func TestCreateResourceRejectsButtonWithoutMenuParent(t *testing.T) {
 	}
 }
 
-func TestResourceTreeBuildsHierarchy(t *testing.T) {
+func TestMenuTreeBuildsHierarchy(t *testing.T) {
 	rootID, childID := uuid.New(), uuid.New()
-	resources := &memoryResourceRepo{resources: map[uuid.UUID]*Resource{
-		rootID:  {ID: rootID, Application: "admin", Type: ResourceTypeMenu, Sort: 1},
-		childID: {ID: childID, Application: "admin", ParentID: &rootID, Type: ResourceTypeButton, Sort: 2},
+	menus := &memoryMenuRepo{menus: map[uuid.UUID]*Menu{
+		rootID:  {ID: rootID, Application: "admin", Type: MenuTypeMenu, Sort: 1},
+		childID: {ID: childID, Application: "admin", ParentID: &rootID, Type: MenuTypeButton, Sort: 2},
 	}}
-	service := NewPermissionService(nil, resources)
-	tree, err := service.ResourceTree(context.Background(), "admin")
+	service := NewPermissionService(nil, menus)
+	tree, err := service.MenuTree(context.Background(), "admin")
 	if err != nil {
 		t.Fatal(err)
 	}

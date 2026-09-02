@@ -4,7 +4,8 @@ import "errors"
 
 var (
 	ErrInvalidArgument = errors.New("invalid argument")
-	ErrNotFound        = errors.New("resource not found")
-	ErrAlreadyExists   = errors.New("resource already exists")
-	ErrConflict        = errors.New("resource conflict")
+	ErrNotFound        = errors.New("not found")
+	ErrAlreadyExists   = errors.New("already exists")
+	ErrConflict        = errors.New("conflict")
+	ErrNotImplemented  = errors.New("not implemented")
 )

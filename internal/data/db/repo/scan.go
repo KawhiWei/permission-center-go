@@ -28,8 +28,8 @@ func scanRole(row rowScanner) (*model.Role, error) {
 	return value, err
 }
 
-func scanResource(row rowScanner) (*model.Resource, error) {
-	value := &model.Resource{}
+func scanMenu(row rowScanner) (*model.Menu, error) {
+	value := &model.Menu{}
 	err := row.Scan(
 		&value.ID,
 		&value.Application,
