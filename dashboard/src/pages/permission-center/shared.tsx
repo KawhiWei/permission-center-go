@@ -1,20 +1,12 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { Space } from 'tdesign-react';
 import {
-  APPLICATION_CHANGE_EVENT,
-  listApplications,
-  type Application,
-  getStoredApplication,
-  setStoredApplication,
+  SERVICE_RESOURCE_CHANGE_EVENT,
+  getStoredServiceResource,
+  listServiceResources,
+  setStoredServiceResource,
+  type ServiceResource,
 } from '../../api/permission';
-
-export const APPLICATION_CATALOG_CHANGE_EVENT = 'permission-center-application-catalog-change';
-
-export const notifyApplicationCatalogChanged = () => {
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(new Event(APPLICATION_CATALOG_CHANGE_EVENT));
-  }
-};
 
 export const getRequestErrorMessage = (error: unknown, fallback: string): string => {
   if (error && typeof error === 'object') {
@@ -35,81 +27,75 @@ export const getRequestErrorMessage = (error: unknown, fallback: string): string
   return fallback;
 };
 
-type ApplicationCatalog = {
-  applications: Application[];
-  applicationsLoading: boolean;
-  applicationsError: string | null;
-  reloadApplications: () => Promise<void>;
+type ServiceResourceCatalog = {
+  serviceResources: ServiceResource[];
+  serviceResourcesLoading: boolean;
+  serviceResourcesError: string | null;
+  reloadServiceResources: () => Promise<void>;
 };
 
-export const useApplicationCatalog = (): ApplicationCatalog => {
-  const [applications, setApplications] = useState<Application[]>([]);
-  // The initial request must be considered loading so a cached application is
-  // not cleared before the catalog has been checked.
-  const [applicationsLoading, setApplicationsLoading] = useState(true);
-  const [applicationsError, setApplicationsError] = useState<string | null>(null);
+export const useServiceResourceCatalog = (): ServiceResourceCatalog => {
+  const [serviceResources, setServiceResources] = useState<ServiceResource[]>([]);
+  // Keep the cached scope usable until the catalog has been checked.
+  const [serviceResourcesLoading, setServiceResourcesLoading] = useState(true);
+  const [serviceResourcesError, setServiceResourcesError] = useState<string | null>(null);
 
-  const reloadApplications = useCallback(async () => {
-    setApplicationsLoading(true);
-    setApplicationsError(null);
+  const reloadServiceResources = useCallback(async () => {
+    setServiceResourcesLoading(true);
+    setServiceResourcesError(null);
     try {
-      setApplications(await listApplications());
+      setServiceResources(await listServiceResources());
     } catch (error) {
-      setApplications([]);
-      setApplicationsError(getRequestErrorMessage(error, '加载应用列表失败'));
+      setServiceResources([]);
+      setServiceResourcesError(getRequestErrorMessage(error, '加载服务资源列表失败'));
     } finally {
-      setApplicationsLoading(false);
+      setServiceResourcesLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    void reloadApplications();
-    const refresh = () => {
-      void reloadApplications();
-    };
-    window.addEventListener(APPLICATION_CATALOG_CHANGE_EVENT, refresh);
-    return () => {
-      window.removeEventListener(APPLICATION_CATALOG_CHANGE_EVENT, refresh);
-    };
-  }, [reloadApplications]);
+    void reloadServiceResources();
+  }, [reloadServiceResources]);
 
-  return { applications, applicationsLoading, applicationsError, reloadApplications };
+  return {
+    serviceResources,
+    serviceResourcesLoading,
+    serviceResourcesError,
+    reloadServiceResources,
+  };
 };
 
-export const useApplicationScope = () => {
-  const [application, setApplication] = useState(getStoredApplication);
-  const catalog = useApplicationCatalog();
+export const useServiceResourceScope = () => {
+  const [serviceResource, setServiceResource] = useState(getStoredServiceResource);
+  const catalog = useServiceResourceCatalog();
 
   useEffect(() => {
-    if (catalog.applicationsLoading || catalog.applicationsError) {
+    if (catalog.serviceResourcesLoading || catalog.serviceResourcesError) {
       return;
     }
 
-    if (!application || catalog.applications.some((item) => (
-      item.application === application && item.enabled && !item.isDeleted
+    if (!serviceResource || !catalog.serviceResources.some((item) => (
+      item.name === serviceResource && item.isActive
     ))) {
-      return;
+      setServiceResource('');
+      setStoredServiceResource('');
     }
-
-    setApplication('');
-    setStoredApplication('');
-  }, [application, catalog.applications, catalog.applicationsError, catalog.applicationsLoading]);
+  }, [catalog.serviceResources, catalog.serviceResourcesError, catalog.serviceResourcesLoading, serviceResource]);
 
   useEffect(() => {
     const sync = () => {
-      const next = getStoredApplication();
-      setApplication(next);
+      setServiceResource(getStoredServiceResource());
     };
-    window.addEventListener(APPLICATION_CHANGE_EVENT, sync);
+    window.addEventListener(SERVICE_RESOURCE_CHANGE_EVENT, sync);
     window.addEventListener('storage', sync);
     return () => {
-      window.removeEventListener(APPLICATION_CHANGE_EVENT, sync);
+      window.removeEventListener(SERVICE_RESOURCE_CHANGE_EVENT, sync);
       window.removeEventListener('storage', sync);
     };
   }, []);
 
   return {
-    application,
+    serviceResource,
     ...catalog,
   };
 };

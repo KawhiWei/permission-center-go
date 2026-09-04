@@ -10,7 +10,7 @@ import {
   type Menu,
   type Role,
 } from '../../../api/permission';
-import { formatDateTime, getRequestErrorMessage, PageHeader, useApplicationScope } from '../shared';
+import { formatDateTime, getRequestErrorMessage, PageHeader, useServiceResourceScope } from '../shared';
 import '../style.less';
 
 type RoleForm = {
@@ -32,7 +32,7 @@ const flattenMenus = (nodes: Menu[], depth = 0): FlatMenu[] => nodes.flatMap((me
 ]);
 
 const RoleManagementPage = () => {
-  const { application } = useApplicationScope();
+  const { serviceResource } = useServiceResourceScope();
   const [roles, setRoles] = useState<Role[]>([]);
   const [loading, setLoading] = useState(false);
   const [dialogVisible, setDialogVisible] = useState(false);
@@ -58,8 +58,8 @@ const RoleManagementPage = () => {
   }, []);
 
   useEffect(() => {
-    void loadRoles(application);
-  }, [application, loadRoles]);
+    void loadRoles(serviceResource);
+  }, [serviceResource, loadRoles]);
 
   const openCreateDialog = () => {
     setRoleForm({ ...EMPTY_ROLE_FORM });
@@ -84,11 +84,11 @@ const RoleManagementPage = () => {
 
     setCreating(true);
     try {
-      await createRole({ application, code, name, description: roleForm.description.trim() });
+      await createRole({ service_resource: serviceResource, code, name, description: roleForm.description.trim() });
       setDialogVisible(false);
       setRoleForm({ ...EMPTY_ROLE_FORM });
       MessagePlugin.success('角色已创建');
-      await loadRoles(application);
+      await loadRoles(serviceResource);
     } catch (error) {
       MessagePlugin.error(getRequestErrorMessage(error, '创建角色失败'));
     } finally {
@@ -101,7 +101,7 @@ const RoleManagementPage = () => {
     setGrantVisible(true);
     setGrantLoading(true);
     try {
-      const [tree, selected] = await Promise.all([getMenuTree(role.application), getRoleMenuIDs(role.id)]);
+      const [tree, selected] = await Promise.all([getMenuTree(role.serviceResource), getRoleMenuIDs(role.id)]);
       setGrantMenus(flattenMenus(tree));
       setGrantMenuIDs(selected);
     } catch (error) {
@@ -146,7 +146,7 @@ const RoleManagementPage = () => {
     <div className="permission-page permission-role-page">
       <PageHeader
         title="角色管理"
-        description="在应用范围内建立角色，并为角色分配菜单与按钮权限"
+        description="在服务资源范围内建立角色，并为角色分配菜单与按钮权限"
         actions={<Button theme="primary" type="button" onClick={openCreateDialog}>新建角色</Button>}
       />
 
@@ -171,7 +171,7 @@ const RoleManagementPage = () => {
               {loading ? (
                 <tr><td colSpan={6} className="permission-empty">正在加载角色...</td></tr>
               ) : roles.length === 0 ? (
-                <tr><td colSpan={6} className="permission-empty">当前应用暂无角色</td></tr>
+                <tr><td colSpan={6} className="permission-empty">当前服务资源暂无角色</td></tr>
               ) : roles.map((role) => (
                 <tr key={role.id}>
                   <td>
@@ -244,11 +244,11 @@ const RoleManagementPage = () => {
         destroyOnClose
       >
         <Space direction="vertical" size={10} style={{ width: '100%' }}>
-          <div className="permission-form-help">勾选角色可见的菜单和按钮，保存后会整体替换该角色在当前应用内的授权。</div>
+          <div className="permission-form-help">勾选角色可见的菜单和按钮，保存后会整体替换该角色在当前服务资源内的授权。</div>
           {grantLoading ? (
             <div className="permission-empty">正在加载菜单权限...</div>
           ) : grantMenus.length === 0 ? (
-            <div className="permission-empty">当前应用暂无可授权的菜单或按钮</div>
+            <div className="permission-empty">当前服务资源暂无可授权的菜单或按钮</div>
           ) : (
             <Checkbox.Group
               value={grantMenuIDs}

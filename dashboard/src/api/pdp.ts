@@ -1,8 +1,7 @@
 import request from './request';
 
-// Phase A registers API entry points and business entities. Menu visibility
-// remains in the existing RBAC model; rate-limit obligations are a later PDP
-// capability.
+// API entry points, business entities and rate-limit rules are evaluated by
+// the PDP. Menu visibility remains in the existing RBAC model.
 export type ResourceType = 'api' | 'entity';
 export type PolicyEffect = 'allow' | 'deny';
 export type SubjectType = 'role' | 'subject';
@@ -10,7 +9,7 @@ export type EnforcementMode = 'enforce' | 'audit' | 'disabled';
 
 export type AuthorizationResource = {
   id: string;
-  application: string;
+  serviceResource: string;
   code: string;
   resourceType: ResourceType;
   name: string;
@@ -27,7 +26,7 @@ export type AuthorizationResource = {
 
 export type AuthorizationAction = {
   id: string;
-  application: string;
+  serviceResource: string;
   code: string;
   name: string;
   description: string;
@@ -42,7 +41,7 @@ export type AuthorizationAction = {
 
 export type AuthorizationAPIEndpoint = {
   id: string;
-  application: string;
+  serviceResource: string;
   serviceCode: string;
   method: string;
   pathTemplate: string;
@@ -60,7 +59,7 @@ export type AuthorizationAPIEndpoint = {
 
 export type AuthorizationPolicy = {
   id: string;
-  application: string;
+  serviceResource: string;
   code: string;
   name: string;
   description: string;
@@ -91,7 +90,7 @@ export type AuthorizationPolicyBinding = {
 };
 
 export type CreateAuthorizationResourceRequest = {
-  application: string;
+  service_resource: string;
   code: string;
   resource_type: ResourceType;
   name: string;
@@ -100,20 +99,20 @@ export type CreateAuthorizationResourceRequest = {
   enabled?: boolean;
 };
 
-export type UpdateAuthorizationResourceRequest = Omit<CreateAuthorizationResourceRequest, 'application'>;
+export type UpdateAuthorizationResourceRequest = Omit<CreateAuthorizationResourceRequest, 'service_resource'>;
 
 export type CreateAuthorizationActionRequest = {
-  application: string;
+  service_resource: string;
   code: string;
   name: string;
   description?: string;
   enabled?: boolean;
 };
 
-export type UpdateAuthorizationActionRequest = Omit<CreateAuthorizationActionRequest, 'application' | 'code'>;
+export type UpdateAuthorizationActionRequest = Omit<CreateAuthorizationActionRequest, 'service_resource' | 'code'>;
 
 export type CreateAuthorizationAPIEndpointRequest = {
-  application: string;
+  service_resource: string;
   service_code: string;
   method: string;
   path_template: string;
@@ -123,10 +122,21 @@ export type CreateAuthorizationAPIEndpointRequest = {
   enabled?: boolean;
 };
 
-export type UpdateAuthorizationAPIEndpointRequest = Omit<CreateAuthorizationAPIEndpointRequest, 'application'>;
+export type UpdateAuthorizationAPIEndpointRequest = Omit<CreateAuthorizationAPIEndpointRequest, 'service_resource'>;
+
+export type ImportSwaggerAPIEndpointsRequest = {
+  service_resource: string;
+  swagger_url: string;
+};
+
+export type ImportSwaggerAPIEndpointsResult = {
+  total: number;
+  created: number;
+  skipped: number;
+};
 
 export type CreateAuthorizationPolicyRequest = {
-  application: string;
+  service_resource: string;
   code: string;
   name: string;
   description?: string;
@@ -137,7 +147,7 @@ export type CreateAuthorizationPolicyRequest = {
   enabled?: boolean;
 };
 
-export type UpdateAuthorizationPolicyRequest = Omit<CreateAuthorizationPolicyRequest, 'application' | 'code'>;
+export type UpdateAuthorizationPolicyRequest = Omit<CreateAuthorizationPolicyRequest, 'service_resource' | 'code'>;
 
 export type ReplaceAuthorizationPolicyBindingsRequest = {
   bindings: Array<{
@@ -148,7 +158,7 @@ export type ReplaceAuthorizationPolicyBindingsRequest = {
 };
 
 export type DecisionRequest = {
-  application: string;
+  service_resource: string;
   subject_id: string;
   resource_code: string;
   resource_type: ResourceType;
@@ -249,7 +259,7 @@ const normalizeResource = (value: unknown): AuthorizationResource => {
   const resourceType = rawString(record, 'resource_type', 'resourceType', 'type', 'Type');
   return {
     id: rawString(record, 'id', 'ID'),
-    application: rawString(record, 'application', 'Application'),
+    serviceResource: rawString(record, 'service_resource', 'serviceResource', 'ServiceResource'),
     code: rawString(record, 'code', 'Code'),
     resourceType: resourceType === 'entity' ? resourceType : 'api',
     name: rawString(record, 'name', 'Name'),
@@ -264,7 +274,7 @@ const normalizeAction = (value: unknown): AuthorizationAction => {
   const record = asRecord(value);
   return {
     id: rawString(record, 'id', 'ID'),
-    application: rawString(record, 'application', 'Application'),
+    serviceResource: rawString(record, 'service_resource', 'serviceResource', 'ServiceResource'),
     code: rawString(record, 'code', 'Code'),
     name: rawString(record, 'name', 'Name'),
     description: rawString(record, 'description', 'Description'),
@@ -278,7 +288,7 @@ const normalizeEndpoint = (value: unknown): AuthorizationAPIEndpoint => {
   const enforcementMode = rawString(record, 'enforcement_mode', 'enforcementMode', 'EnforcementMode');
   return {
     id: rawString(record, 'id', 'ID'),
-    application: rawString(record, 'application', 'Application'),
+    serviceResource: rawString(record, 'service_resource', 'serviceResource', 'ServiceResource'),
     serviceCode: rawString(record, 'service_code', 'serviceCode', 'ServiceCode'),
     method: rawString(record, 'method', 'Method').toUpperCase(),
     pathTemplate: rawString(record, 'path_template', 'pathTemplate', 'PathTemplate'),
@@ -295,7 +305,7 @@ const normalizePolicy = (value: unknown): AuthorizationPolicy => {
   const effect = rawString(record, 'effect', 'Effect');
   return {
     id: rawString(record, 'id', 'ID'),
-    application: rawString(record, 'application', 'Application'),
+    serviceResource: rawString(record, 'service_resource', 'serviceResource', 'ServiceResource'),
     code: rawString(record, 'code', 'Code'),
     name: rawString(record, 'name', 'Name'),
     description: rawString(record, 'description', 'Description'),
@@ -332,10 +342,10 @@ const normalizeDecision = (value: unknown): Decision => {
   };
 };
 
-const scopeQuery = (application: string) => `?application=${encodeURIComponent(application.trim())}`;
+const scopeQuery = (serviceResource: string) => `?service_resource=${encodeURIComponent(serviceResource.trim())}`;
 
-export const listAuthorizationResources = async (application: string): Promise<AuthorizationResource[]> => {
-  const response = await request.get<unknown>(`/v1/authorization/resources${scopeQuery(application)}`);
+export const listAuthorizationResources = async (serviceResource: string): Promise<AuthorizationResource[]> => {
+  const response = await request.get<unknown>(`/v1/authorization/resources${scopeQuery(serviceResource)}`);
   return readItems(response).map(normalizeResource);
 };
 
@@ -353,8 +363,8 @@ export const deleteAuthorizationResource = async (id: string): Promise<void> => 
   await request.delete<unknown>(`/v1/authorization/resources/${encodeURIComponent(id)}`);
 };
 
-export const listAuthorizationActions = async (application: string): Promise<AuthorizationAction[]> => {
-  const response = await request.get<unknown>(`/v1/authorization/actions${scopeQuery(application)}`);
+export const listAuthorizationActions = async (serviceResource: string): Promise<AuthorizationAction[]> => {
+  const response = await request.get<unknown>(`/v1/authorization/actions${scopeQuery(serviceResource)}`);
   return readItems(response).map(normalizeAction);
 };
 
@@ -372,8 +382,8 @@ export const deleteAuthorizationAction = async (id: string): Promise<void> => {
   await request.delete<unknown>(`/v1/authorization/actions/${encodeURIComponent(id)}`);
 };
 
-export const listAuthorizationAPIEndpoints = async (application: string): Promise<AuthorizationAPIEndpoint[]> => {
-  const response = await request.get<unknown>(`/v1/authorization/api-endpoints${scopeQuery(application)}`);
+export const listAuthorizationAPIEndpoints = async (serviceResource: string): Promise<AuthorizationAPIEndpoint[]> => {
+  const response = await request.get<unknown>(`/v1/authorization/api-endpoints${scopeQuery(serviceResource)}`);
   return readItems(response).map(normalizeEndpoint);
 };
 
@@ -391,8 +401,18 @@ export const deleteAuthorizationAPIEndpoint = async (id: string): Promise<void> 
   await request.delete<unknown>(`/v1/authorization/api-endpoints/${encodeURIComponent(id)}`);
 };
 
-export const listAuthorizationPolicies = async (application: string): Promise<AuthorizationPolicy[]> => {
-  const response = await request.get<unknown>(`/v1/authorization/policies${scopeQuery(application)}`);
+export const importSwaggerAPIEndpoints = async (payload: ImportSwaggerAPIEndpointsRequest): Promise<ImportSwaggerAPIEndpointsResult> => {
+  const response = await request.post<unknown>('/v1/authorization/api-endpoints/import-swagger', payload);
+  const item = asRecord(readItem(response));
+  return {
+    total: rawNumber(item, 'total', 'Total'),
+    created: rawNumber(item, 'created', 'Created'),
+    skipped: rawNumber(item, 'skipped', 'Skipped'),
+  };
+};
+
+export const listAuthorizationPolicies = async (serviceResource: string): Promise<AuthorizationPolicy[]> => {
+  const response = await request.get<unknown>(`/v1/authorization/policies${scopeQuery(serviceResource)}`);
   return readItems(response).map(normalizePolicy);
 };
 

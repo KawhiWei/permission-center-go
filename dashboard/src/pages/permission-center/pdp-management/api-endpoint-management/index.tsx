@@ -4,6 +4,7 @@ import { Button, Card, Dialog, Form, Input, Select, Space, Tag } from 'tdesign-r
 import {
   createAuthorizationAPIEndpoint,
   deleteAuthorizationAPIEndpoint,
+  importSwaggerAPIEndpoints,
   listAuthorizationActions,
   listAuthorizationAPIEndpoints,
   listAuthorizationResources,
@@ -13,7 +14,7 @@ import {
   type AuthorizationResource,
   type EnforcementMode,
 } from '../../../../api/pdp';
-import { formatDateTime, getRequestErrorMessage, PageHeader, useApplicationScope } from '../../shared';
+import { formatDateTime, getRequestErrorMessage, PageHeader, useServiceResourceScope } from '../../shared';
 import {
   EMPTY_ENDPOINT_FORM,
   enforcementLabel,
@@ -28,7 +29,7 @@ import '../../style.less';
 import '../style.less';
 
 const ApiEndpointManagementPage = () => {
-  const { application } = useApplicationScope();
+  const { serviceResource } = useServiceResourceScope();
   const [endpoints, setEndpoints] = useState<AuthorizationAPIEndpoint[]>([]);
   const [resources, setResources] = useState<AuthorizationResource[]>([]);
   const [actions, setActions] = useState<AuthorizationAction[]>([]);
@@ -39,6 +40,9 @@ const ApiEndpointManagementPage = () => {
   const [saving, setSaving] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<AuthorizationAPIEndpoint | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [swaggerDialogVisible, setSwaggerDialogVisible] = useState(false);
+  const [swaggerURL, setSwaggerURL] = useState('');
+  const [importingSwagger, setImportingSwagger] = useState(false);
 
   const loadData = useCallback(async (scope: string) => {
     setLoading(true);
@@ -62,8 +66,8 @@ const ApiEndpointManagementPage = () => {
   }, []);
 
   useEffect(() => {
-    void loadData(application);
-  }, [application, loadData]);
+    void loadData(serviceResource);
+  }, [serviceResource, loadData]);
 
   const resourceOptions = useMemo(
     () => resources.filter((item) => item.enabled && item.resourceType === 'api').map((item) => ({ label: `${item.name || item.code} · ${item.code}`, value: item.id })),
@@ -73,7 +77,6 @@ const ApiEndpointManagementPage = () => {
     () => actions.filter((item) => item.enabled).map((item) => ({ label: `${item.name || item.code} · ${item.code}`, value: item.id })),
     [actions],
   );
-
   const resetForm = () => {
     setEditingID('');
     setForm({ ...EMPTY_ENDPOINT_FORM });
@@ -132,12 +135,12 @@ const ApiEndpointManagementPage = () => {
         await updateAuthorizationAPIEndpoint(editingID, payload);
         notify('success', 'API 端点已更新');
       } else {
-        await createAuthorizationAPIEndpoint({ application, ...payload });
+        await createAuthorizationAPIEndpoint({ service_resource: serviceResource, ...payload });
         notify('success', 'API 端点已创建');
       }
       setDialogVisible(false);
       resetForm();
-      await loadData(application);
+      await loadData(serviceResource);
     } catch (error) {
       notify('error', getRequestErrorMessage(error, editingID ? '更新 API 端点失败' : '创建 API 端点失败'));
     } finally {
@@ -155,11 +158,43 @@ const ApiEndpointManagementPage = () => {
       await deleteAuthorizationAPIEndpoint(target.id);
       setDeleteTarget(null);
       notify('success', 'API 端点已删除');
-      await loadData(application);
+      await loadData(serviceResource);
     } catch (error) {
       notify('error', getRequestErrorMessage(error, '删除 API 端点失败'));
     } finally {
       setDeleting(false);
+    }
+  };
+
+  const closeSwaggerDialog = () => {
+    if (!importingSwagger) {
+      setSwaggerDialogVisible(false);
+      setSwaggerURL('');
+    }
+  };
+
+  const openSwaggerDialog = () => {
+    setSwaggerURL('');
+    setSwaggerDialogVisible(true);
+  };
+
+  const importSwagger = async () => {
+    const swaggerURLValue = swaggerURL.trim();
+    if (!swaggerURLValue) {
+      notify('warning', '请输入 Swagger 地址');
+      return;
+    }
+    setImportingSwagger(true);
+    try {
+      const result = await importSwaggerAPIEndpoints({ service_resource: serviceResource, swagger_url: swaggerURLValue });
+      notify('success', `Swagger 导入完成：新增 ${result.created} 个，已存在跳过 ${result.skipped} 个`);
+      setSwaggerDialogVisible(false);
+      setSwaggerURL('');
+      await loadData(serviceResource);
+    } catch (error) {
+      notify('error', getRequestErrorMessage(error, '导入 Swagger 接口失败'));
+    } finally {
+      setImportingSwagger(false);
     }
   };
 
@@ -170,14 +205,15 @@ const ApiEndpointManagementPage = () => {
         description="把业务服务路由绑定到 API 资源和动作，端点授权只判断接口能否被调用。"
         actions={(
           <Space>
-            <Button variant="outline" loading={loading} type="button" onClick={() => void loadData(application)}>刷新</Button>
+            <Button variant="outline" loading={loading} type="button" onClick={() => void loadData(serviceResource)}>刷新</Button>
+            <Button variant="outline" type="button" onClick={openSwaggerDialog}>导入 Swagger</Button>
             <Button theme="primary" type="button" onClick={openCreateDialog}>新建端点</Button>
           </Space>
         )}
       />
 
       <div className="permission-toolbar">
-        <span className="permission-toolbar-meta">当前应用共 {endpoints.length} 个 API 端点</span>
+        <span className="permission-toolbar-meta">当前服务资源共 {endpoints.length} 个 API 端点</span>
       </div>
 
       <Card className="permission-card" bordered>
@@ -185,7 +221,7 @@ const ApiEndpointManagementPage = () => {
           <table className="permission-table permission-pdp-table">
             <thead><tr><th>服务与路由</th><th>资源</th><th>动作</th><th>执行模式</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead>
             <tbody>
-              {loading ? <LoadingRow colSpan={7} loading empty="当前应用暂无 API 端点" /> : endpoints.length === 0 ? <LoadingRow colSpan={7} loading={false} empty="当前应用暂无 API 端点" /> : endpoints.map((item) => {
+              {loading ? <LoadingRow colSpan={7} loading empty="当前服务资源暂无 API 端点" /> : endpoints.length === 0 ? <LoadingRow colSpan={7} loading={false} empty="当前服务资源暂无 API 端点" /> : endpoints.map((item) => {
                 const resource = resources.find((resourceItem) => resourceItem.id === item.resourceId);
                 const action = actions.find((actionItem) => actionItem.id === item.actionId);
                 return (
@@ -204,6 +240,28 @@ const ApiEndpointManagementPage = () => {
           </table>
         </div>
       </Card>
+
+      <Dialog
+        visible={swaggerDialogVisible}
+        header="导入 Swagger 接口"
+        width={600}
+        confirmBtn={{ content: '开始导入', theme: 'primary', loading: importingSwagger }}
+        cancelBtn="取消"
+        confirmLoading={importingSwagger}
+        onConfirm={() => void importSwagger()}
+        onCancel={closeSwaggerDialog}
+        onClose={closeSwaggerDialog}
+        destroyOnClose
+      >
+        <Form labelAlign="top" className="permission-pdp-dialog-form">
+          <Form.FormItem label="目标服务资源">
+            <Input value={serviceResource} disabled />
+          </Form.FormItem>
+          <Form.FormItem label="Swagger 地址" help="支持 Swagger UI 页面、Swagger 2.0 与 OpenAPI 3.x 的 JSON 或 YAML 文档。">
+            <Input value={swaggerURL} placeholder="例如 http://localhost:5051/swagger/index.html" onChange={setSwaggerURL} />
+          </Form.FormItem>
+        </Form>
+      </Dialog>
 
       <Dialog
         visible={dialogVisible}

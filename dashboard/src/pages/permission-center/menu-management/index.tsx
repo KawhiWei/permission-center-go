@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactElement } from 're
 import { Button, Card, Dialog, Form, Input, MessagePlugin, Select, Space, Tag } from 'tdesign-react';
 
 import { createMenu, getMenuTree, type CreateMenuRequest, type Menu, type MenuType } from '../../../api/permission';
-import { getRequestErrorMessage, PageHeader, useApplicationScope } from '../shared';
+import { getRequestErrorMessage, PageHeader, useServiceResourceScope } from '../shared';
 import '../style.less';
 
 type MenuForm = {
@@ -64,7 +64,7 @@ const renderMenuNode = (node: Menu): ReactElement => (
 const flattenMenus = (nodes: Menu[]): Menu[] => nodes.flatMap((node) => [node, ...flattenMenus(node.children)]);
 
 const MenuManagementPage = () => {
-  const { application } = useApplicationScope();
+  const { serviceResource } = useServiceResourceScope();
   const [tree, setTree] = useState<Menu[]>([]);
   const [loading, setLoading] = useState(false);
   const [dialogVisible, setDialogVisible] = useState(false);
@@ -84,8 +84,8 @@ const MenuManagementPage = () => {
   }, []);
 
   useEffect(() => {
-    void loadTree(application);
-  }, [application, loadTree]);
+    void loadTree(serviceResource);
+  }, [serviceResource, loadTree]);
 
   const menuParents = useMemo(
     () => flattenMenus(tree)
@@ -126,7 +126,7 @@ const MenuManagementPage = () => {
 
     const parsedSort = Number(menuForm.sort);
     const payload: CreateMenuRequest = {
-      application,
+      service_resource: serviceResource,
       parent_id: menuForm.parentId || null,
       code,
       name,
@@ -146,7 +146,7 @@ const MenuManagementPage = () => {
       setDialogVisible(false);
       setMenuForm({ ...EMPTY_MENU_FORM });
       MessagePlugin.success(`${menuForm.type === 'menu' ? '菜单' : '按钮'}已创建`);
-      await loadTree(application);
+      await loadTree(serviceResource);
     } catch (error) {
       MessagePlugin.error(getRequestErrorMessage(error, '创建权限节点失败'));
     } finally {
@@ -158,7 +158,7 @@ const MenuManagementPage = () => {
     <div className="permission-page permission-menu-page">
       <PageHeader
         title="菜单与按钮管理"
-        description="维护应用导航树和操作按钮，菜单与按钮使用类型严格区分"
+        description="维护服务资源导航树和操作按钮，菜单与按钮使用类型严格区分"
         actions={(
           <Space>
             <Button variant="outline" theme="primary" type="button" onClick={() => openCreateDialog('menu')}>新建菜单</Button>
@@ -182,7 +182,7 @@ const MenuManagementPage = () => {
           {loading ? (
             <div className="permission-empty">正在加载菜单树...</div>
           ) : tree.length === 0 ? (
-            <div className="permission-empty">当前应用暂无菜单或按钮</div>
+          <div className="permission-empty">当前服务资源暂无菜单或按钮</div>
           ) : tree.map(renderMenuNode)}
         </div>
       </Card>

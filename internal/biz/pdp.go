@@ -48,8 +48,10 @@ const (
 
 type AuthorizationResource struct {
 	BaseFields
-	ID          uuid.UUID    `json:"id"`
-	Application string       `json:"application"`
+	ID              uuid.UUID `json:"id"`
+	ServiceResource string    `json:"service_resource"`
+	// Application is retained as a wire-compatible alias for existing clients.
+	Application string       `json:"application,omitempty"`
 	Code        string       `json:"code"`
 	Type        ResourceType `json:"type"`
 	Name        string       `json:"name"`
@@ -64,20 +66,24 @@ type Resource = AuthorizationResource
 
 type AuthorizationAction struct {
 	BaseFields
-	ID          uuid.UUID `json:"id"`
-	Application string    `json:"application"`
-	Code        string    `json:"code"`
-	Name        string    `json:"name"`
-	Description string    `json:"description"`
-	Enabled     bool      `json:"enabled"`
+	ID              uuid.UUID `json:"id"`
+	ServiceResource string    `json:"service_resource"`
+	// Application is retained as a wire-compatible alias for existing clients.
+	Application string `json:"application,omitempty"`
+	Code        string `json:"code"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Enabled     bool   `json:"enabled"`
 }
 
 type Action = AuthorizationAction
 
 type AuthorizationAPIEndpoint struct {
 	BaseFields
-	ID              uuid.UUID       `json:"id"`
-	Application     string          `json:"application"`
+	ID              uuid.UUID `json:"id"`
+	ServiceResource string    `json:"service_resource"`
+	// Application is retained as a wire-compatible alias for existing clients.
+	Application     string          `json:"application,omitempty"`
 	ServiceCode     string          `json:"service_code"`
 	Method          string          `json:"method"`
 	PathTemplate    string          `json:"path_template"`
@@ -91,8 +97,10 @@ type APIEndpoint = AuthorizationAPIEndpoint
 
 type AuthorizationPolicy struct {
 	BaseFields
-	ID            uuid.UUID    `json:"id"`
-	Application   string       `json:"application"`
+	ID              uuid.UUID `json:"id"`
+	ServiceResource string    `json:"service_resource"`
+	// Application is retained as a wire-compatible alias for existing clients.
+	Application   string       `json:"application,omitempty"`
 	Code          string       `json:"code"`
 	Name          string       `json:"name"`
 	Description   string       `json:"description"`
@@ -119,7 +127,9 @@ type PolicyBinding = AuthorizationPolicyBinding
 // adapter also accepts the nested subject/resource/request shape documented for
 // service-to-service callers and normalizes it to this type.
 type DecisionRequest struct {
-	Application  string       `json:"application"`
+	ServiceResource string `json:"service_resource"`
+	// Application remains accepted by old PEPs as an alias for service_resource.
+	Application  string       `json:"application,omitempty"`
 	SubjectID    string       `json:"subject_id"`
 	ResourceCode string       `json:"resource_code"`
 	ResourceType ResourceType `json:"resource_type"`
@@ -176,10 +186,11 @@ type PDPRepository interface {
 // repository is optional for unit tests and is required for role-bound policy
 // evaluation in a running application.
 type PDPService struct {
-	repository   PDPRepository
-	userRoles    UserRoleRepository
-	roles        RoleRepository
-	applications ApplicationRepository
+	repository       PDPRepository
+	userRoles        UserRoleRepository
+	roles            RoleRepository
+	applications     ApplicationRepository
+	serviceResources ServiceResourceCatalog
 }
 
 func NewPDPService(repository PDPRepository, userRoles UserRoleRepository, roles ...RoleRepository) *PDPService {
@@ -195,6 +206,14 @@ func (s *PDPService) WithApplicationRepository(applications ApplicationRepositor
 	return s
 }
 
+// WithServiceResourceCatalog makes service-resource metadata the source of
+// truth for scope validation. The application repository remains a fallback
+// for compatibility with callers that have not migrated their wiring.
+func (s *PDPService) WithServiceResourceCatalog(catalog ServiceResourceCatalog) *PDPService {
+	s.serviceResources = catalog
+	return s
+}
+
 func (s *PDPService) ensureReady() error {
 	if s == nil || s.repository == nil {
 		return fmt.Errorf("pdp repository is not configured")
@@ -203,10 +222,24 @@ func (s *PDPService) ensureReady() error {
 }
 
 func (s *PDPService) ensureApplication(ctx context.Context, application string) error {
+	return s.ensureServiceResource(ctx, application)
+}
+
+func (s *PDPService) ensureServiceResource(ctx context.Context, serviceResource string) error {
+	if s.serviceResources != nil {
+		value, err := s.serviceResources.Get(ctx, serviceResource)
+		if err != nil {
+			return err
+		}
+		if !value.IsActive {
+			return fmt.Errorf("%w: service resource is disabled", ErrConflict)
+		}
+		return nil
+	}
 	if s.applications == nil {
 		return nil
 	}
-	value, err := s.applications.Get(ctx, application)
+	value, err := s.applications.Get(ctx, serviceResource)
 	if err != nil {
 		return err
 	}
@@ -223,14 +256,14 @@ func (s *PDPService) CreateResource(ctx context.Context, value *AuthorizationRes
 	if value == nil {
 		return nil, fmt.Errorf("%w: resource is required", ErrInvalidArgument)
 	}
-	application, err := validateApplication(value.Application)
+	serviceResource, err := setServiceResourceScope(value.ServiceResource, value.Application)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.ensureApplication(ctx, application); err != nil {
+	if err := s.ensureServiceResource(ctx, serviceResource); err != nil {
 		return nil, err
 	}
-	value.Application = application
+	value.ServiceResource, value.Application = serviceResource, serviceResource
 	if err := validateAuthorizationResource(value); err != nil {
 		return nil, err
 	}
@@ -252,14 +285,14 @@ func (s *PDPService) ListResources(ctx context.Context, application string) ([]*
 	if err := s.ensureReady(); err != nil {
 		return nil, err
 	}
-	application, err := validateApplication(application)
+	serviceResource, err := validateServiceResource(application)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.ensureApplication(ctx, application); err != nil {
+	if err := s.ensureServiceResource(ctx, serviceResource); err != nil {
 		return nil, err
 	}
-	return s.repository.ListResources(ctx, application)
+	return s.repository.ListResources(ctx, serviceResource)
 }
 
 func (s *PDPService) UpdateResource(ctx context.Context, value *AuthorizationResource) (*AuthorizationResource, error) {
@@ -273,17 +306,18 @@ func (s *PDPService) UpdateResource(ctx context.Context, value *AuthorizationRes
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(value.Application) == "" {
-		value.Application = existing.Application
+	if serviceResourceValue(value.ServiceResource, value.Application) == "" {
+		value.ServiceResource = serviceResourceValue(existing.ServiceResource, existing.Application)
 	}
-	application, err := validateApplication(value.Application)
+	serviceResource, err := setServiceResourceScope(value.ServiceResource, value.Application)
 	if err != nil {
 		return nil, err
 	}
-	if application != existing.Application {
+	if serviceResource != serviceResourceValue(existing.ServiceResource, existing.Application) {
 		return nil, fmt.Errorf("%w: resource application cannot be changed", ErrConflict)
 	}
-	if err := s.ensureApplication(ctx, application); err != nil {
+	value.ServiceResource, value.Application = serviceResource, serviceResource
+	if err := s.ensureServiceResource(ctx, serviceResource); err != nil {
 		return nil, err
 	}
 	if err := validateAuthorizationResource(value); err != nil {
@@ -310,14 +344,14 @@ func (s *PDPService) CreateAction(ctx context.Context, value *AuthorizationActio
 	if value == nil {
 		return nil, fmt.Errorf("%w: action is required", ErrInvalidArgument)
 	}
-	application, err := validateApplication(value.Application)
+	serviceResource, err := setServiceResourceScope(value.ServiceResource, value.Application)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.ensureApplication(ctx, application); err != nil {
+	if err := s.ensureServiceResource(ctx, serviceResource); err != nil {
 		return nil, err
 	}
-	value.Application = application
+	value.ServiceResource, value.Application = serviceResource, serviceResource
 	if err := validateAuthorizationAction(value); err != nil {
 		return nil, err
 	}
@@ -339,14 +373,14 @@ func (s *PDPService) ListActions(ctx context.Context, application string) ([]*Au
 	if err := s.ensureReady(); err != nil {
 		return nil, err
 	}
-	application, err := validateApplication(application)
+	serviceResource, err := validateServiceResource(application)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.ensureApplication(ctx, application); err != nil {
+	if err := s.ensureServiceResource(ctx, serviceResource); err != nil {
 		return nil, err
 	}
-	return s.repository.ListActions(ctx, application)
+	return s.repository.ListActions(ctx, serviceResource)
 }
 
 func (s *PDPService) UpdateAction(ctx context.Context, value *AuthorizationAction) (*AuthorizationAction, error) {
@@ -360,17 +394,18 @@ func (s *PDPService) UpdateAction(ctx context.Context, value *AuthorizationActio
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(value.Application) == "" {
-		value.Application = existing.Application
+	if serviceResourceValue(value.ServiceResource, value.Application) == "" {
+		value.ServiceResource = serviceResourceValue(existing.ServiceResource, existing.Application)
 	}
-	application, err := validateApplication(value.Application)
+	serviceResource, err := setServiceResourceScope(value.ServiceResource, value.Application)
 	if err != nil {
 		return nil, err
 	}
-	if application != existing.Application {
+	if serviceResource != serviceResourceValue(existing.ServiceResource, existing.Application) {
 		return nil, fmt.Errorf("%w: action application cannot be changed", ErrConflict)
 	}
-	if err := s.ensureApplication(ctx, application); err != nil {
+	value.ServiceResource, value.Application = serviceResource, serviceResource
+	if err := s.ensureServiceResource(ctx, serviceResource); err != nil {
 		return nil, err
 	}
 	if err := validateAuthorizationAction(value); err != nil {
@@ -397,14 +432,14 @@ func (s *PDPService) CreateAPIEndpoint(ctx context.Context, value *Authorization
 	if value == nil {
 		return nil, fmt.Errorf("%w: api endpoint is required", ErrInvalidArgument)
 	}
-	application, err := validateApplication(value.Application)
+	serviceResource, err := setServiceResourceScope(value.ServiceResource, value.Application)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.ensureApplication(ctx, application); err != nil {
+	if err := s.ensureServiceResource(ctx, serviceResource); err != nil {
 		return nil, err
 	}
-	value.Application = application
+	value.ServiceResource, value.Application = serviceResource, serviceResource
 	if err := s.validateAPIEndpoint(ctx, value); err != nil {
 		return nil, err
 	}
@@ -426,14 +461,14 @@ func (s *PDPService) ListAPIEndpoints(ctx context.Context, application string) (
 	if err := s.ensureReady(); err != nil {
 		return nil, err
 	}
-	application, err := validateApplication(application)
+	serviceResource, err := validateServiceResource(application)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.ensureApplication(ctx, application); err != nil {
+	if err := s.ensureServiceResource(ctx, serviceResource); err != nil {
 		return nil, err
 	}
-	return s.repository.ListAPIEndpoints(ctx, application)
+	return s.repository.ListAPIEndpoints(ctx, serviceResource)
 }
 
 func (s *PDPService) UpdateAPIEndpoint(ctx context.Context, value *AuthorizationAPIEndpoint) (*AuthorizationAPIEndpoint, error) {
@@ -447,17 +482,18 @@ func (s *PDPService) UpdateAPIEndpoint(ctx context.Context, value *Authorization
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(value.Application) == "" {
-		value.Application = existing.Application
+	if serviceResourceValue(value.ServiceResource, value.Application) == "" {
+		value.ServiceResource = serviceResourceValue(existing.ServiceResource, existing.Application)
 	}
-	application, err := validateApplication(value.Application)
+	serviceResource, err := setServiceResourceScope(value.ServiceResource, value.Application)
 	if err != nil {
 		return nil, err
 	}
-	if application != existing.Application {
+	if serviceResource != serviceResourceValue(existing.ServiceResource, existing.Application) {
 		return nil, fmt.Errorf("%w: api endpoint application cannot be changed", ErrConflict)
 	}
-	if err := s.ensureApplication(ctx, application); err != nil {
+	value.ServiceResource, value.Application = serviceResource, serviceResource
+	if err := s.ensureServiceResource(ctx, serviceResource); err != nil {
 		return nil, err
 	}
 	if err := s.validateAPIEndpoint(ctx, value); err != nil {
@@ -484,14 +520,14 @@ func (s *PDPService) CreatePolicy(ctx context.Context, value *AuthorizationPolic
 	if value == nil {
 		return nil, fmt.Errorf("%w: policy is required", ErrInvalidArgument)
 	}
-	application, err := validateApplication(value.Application)
+	serviceResource, err := setServiceResourceScope(value.ServiceResource, value.Application)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.ensureApplication(ctx, application); err != nil {
+	if err := s.ensureServiceResource(ctx, serviceResource); err != nil {
 		return nil, err
 	}
-	value.Application = application
+	value.ServiceResource, value.Application = serviceResource, serviceResource
 	if err := validateAuthorizationPolicy(value); err != nil {
 		return nil, err
 	}
@@ -513,14 +549,14 @@ func (s *PDPService) ListPolicies(ctx context.Context, application string) ([]*A
 	if err := s.ensureReady(); err != nil {
 		return nil, err
 	}
-	application, err := validateApplication(application)
+	serviceResource, err := validateServiceResource(application)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.ensureApplication(ctx, application); err != nil {
+	if err := s.ensureServiceResource(ctx, serviceResource); err != nil {
 		return nil, err
 	}
-	return s.repository.ListPolicies(ctx, application)
+	return s.repository.ListPolicies(ctx, serviceResource)
 }
 
 func (s *PDPService) UpdatePolicy(ctx context.Context, value *AuthorizationPolicy) (*AuthorizationPolicy, error) {
@@ -534,17 +570,18 @@ func (s *PDPService) UpdatePolicy(ctx context.Context, value *AuthorizationPolic
 	if err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(value.Application) == "" {
-		value.Application = existing.Application
+	if serviceResourceValue(value.ServiceResource, value.Application) == "" {
+		value.ServiceResource = serviceResourceValue(existing.ServiceResource, existing.Application)
 	}
-	application, err := validateApplication(value.Application)
+	serviceResource, err := setServiceResourceScope(value.ServiceResource, value.Application)
 	if err != nil {
 		return nil, err
 	}
-	if application != existing.Application {
+	if serviceResource != serviceResourceValue(existing.ServiceResource, existing.Application) {
 		return nil, fmt.Errorf("%w: policy application cannot be changed", ErrConflict)
 	}
-	if err := s.ensureApplication(ctx, application); err != nil {
+	value.ServiceResource, value.Application = serviceResource, serviceResource
+	if err := s.ensureServiceResource(ctx, serviceResource); err != nil {
 		return nil, err
 	}
 	if err := validateAuthorizationPolicy(value); err != nil {
@@ -626,7 +663,7 @@ func (s *PDPService) Decide(ctx context.Context, request DecisionRequest) (Decis
 	if err := s.ensureReady(); err != nil {
 		return decision, err
 	}
-	application, err := validateApplication(request.Application)
+	serviceResource, err := setServiceResourceScope(request.ServiceResource, request.Application)
 	if err != nil {
 		return decision, err
 	}
@@ -634,10 +671,10 @@ func (s *PDPService) Decide(ctx context.Context, request DecisionRequest) (Decis
 	if err != nil {
 		return decision, err
 	}
-	if err := s.ensureApplication(ctx, application); err != nil {
+	if err := s.ensureServiceResource(ctx, serviceResource); err != nil {
 		return decision, err
 	}
-	request.Application, request.SubjectID = application, subjectID
+	request.ServiceResource, request.Application, request.SubjectID = serviceResource, serviceResource, subjectID
 
 	// The UI keeps a default HTTP method in the simulation form even for an
 	// entity decision. A route lookup therefore starts only when a service or
@@ -648,7 +685,7 @@ func (s *PDPService) Decide(ctx context.Context, request DecisionRequest) (Decis
 		if normalizeErr != nil {
 			return decision, normalizeErr
 		}
-		endpoint, endpointErr := s.repository.GetAPIEndpointByRoute(ctx, application, serviceCode, method, pathTemplate)
+		endpoint, endpointErr := s.repository.GetAPIEndpointByRoute(ctx, serviceResource, serviceCode, method, pathTemplate)
 		if endpointErr != nil {
 			if errors.Is(endpointErr, ErrNotFound) {
 				decision.ReasonCode = "ENDPOINT_NOT_FOUND"
@@ -696,7 +733,7 @@ func (s *PDPService) Decide(ctx context.Context, request DecisionRequest) (Decis
 	if request.ResourceCode == "" || request.Action == "" {
 		return decision, fmt.Errorf("%w: resource_code and action are required", ErrInvalidArgument)
 	}
-	resource, err := s.repository.GetResourceByCode(ctx, application, request.ResourceCode)
+	resource, err := s.repository.GetResourceByCode(ctx, serviceResource, request.ResourceCode)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			decision.ReasonCode = "RESOURCE_NOT_FOUND"
@@ -712,7 +749,7 @@ func (s *PDPService) Decide(ctx context.Context, request DecisionRequest) (Decis
 		decision.ReasonCode = "RESOURCE_TYPE_MISMATCH"
 		return decision, nil
 	}
-	action, err := s.repository.GetActionByCode(ctx, application, request.Action)
+	action, err := s.repository.GetActionByCode(ctx, serviceResource, request.Action)
 	if err != nil {
 		if errors.Is(err, ErrNotFound) {
 			decision.ReasonCode = "ACTION_NOT_FOUND"
@@ -727,12 +764,12 @@ func (s *PDPService) Decide(ctx context.Context, request DecisionRequest) (Decis
 
 	roleIDs := []string{}
 	if s.userRoles != nil {
-		roleIDs, err = s.userRoles.RoleIDs(ctx, subjectID, application)
+		roleIDs, err = s.userRoles.RoleIDs(ctx, subjectID, serviceResource)
 		if err != nil {
 			return decision, err
 		}
 	}
-	policies, err := s.repository.ListMatchingPolicies(ctx, application, subjectID, roleIDs)
+	policies, err := s.repository.ListMatchingPolicies(ctx, serviceResource, subjectID, roleIDs)
 	if err != nil {
 		return decision, err
 	}
@@ -791,7 +828,8 @@ func (s *PDPService) validateAPIEndpoint(ctx context.Context, value *Authorizati
 	if err != nil {
 		return err
 	}
-	if resource.Application != value.Application || action.Application != value.Application {
+	endpointScope := serviceResourceValue(value.ServiceResource, value.Application)
+	if serviceResourceValue(resource.ServiceResource, resource.Application) != endpointScope || serviceResourceValue(action.ServiceResource, action.Application) != endpointScope {
 		return fmt.Errorf("%w: endpoint, resource, and action must belong to the same application", ErrConflict)
 	}
 	if resource.Type != ResourceTypeAPI && resource.Type != ResourceTypeEntity {
@@ -804,6 +842,7 @@ func (s *PDPService) validateAPIEndpoint(ctx context.Context, value *Authorizati
 	if mode != EnforcementModeEnforce && mode != EnforcementModeAudit && mode != EnforcementModeDisabled {
 		return fmt.Errorf("%w: enforcement_mode must be enforce, audit, or disabled", ErrInvalidArgument)
 	}
+	value.ServiceResource, value.Application = endpointScope, endpointScope
 	value.ServiceCode, value.Method, value.PathTemplate, value.EnforcementMode = serviceCode, method, pathTemplate, mode
 	return nil
 }

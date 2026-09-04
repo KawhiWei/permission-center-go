@@ -13,38 +13,13 @@ import LogoComponent from './logo';
 import PublicContent from './content';
 import PublicHeader from './header';
 import SliderMenu from './side';
+import { DEFAULT_LAYOUT_TAB, getStoredLayoutTabs, LAYOUT_TABS_STORAGE_KEY, type LayoutTabItem } from './tab-storage';
 
 const { Content, Aside, Header } = Layout;
 const { TabPanel } = Tabs;
 
-interface TabItem {
-  value: string;
-  label: string;
-  removable: boolean;
-}
-
-const DEFAULT_TAB_PATH = '/dashboard';
-const DEFAULT_TAB_LABEL = '仪表盘';
-const TABS_STORAGE_KEY = 'permission-center-layout-tabs';
-
-const getInitialTabs = (): TabItem[] => {
-  const defaultTabs = [{ value: DEFAULT_TAB_PATH, label: DEFAULT_TAB_LABEL, removable: false }];
-  try {
-    const raw = window.localStorage.getItem(TABS_STORAGE_KEY);
-    if (!raw) {
-      return defaultTabs;
-    }
-    const parsed = JSON.parse(raw) as TabItem[];
-    if (!Array.isArray(parsed) || parsed.length === 0) {
-      return defaultTabs;
-    }
-    const validTabs = parsed.filter((tab) => tab?.value && tab?.label);
-    const hasDashboard = validTabs.some((tab) => tab.value === DEFAULT_TAB_PATH);
-    return hasDashboard ? validTabs : [...defaultTabs, ...validTabs];
-  } catch {
-    return defaultTabs;
-  }
-};
+const DEFAULT_TAB_PATH = DEFAULT_LAYOUT_TAB.value;
+const DEFAULT_TAB_LABEL = DEFAULT_LAYOUT_TAB.label;
 
 const PublicLayout = () => {
   const matches = useMatches();
@@ -54,10 +29,10 @@ const PublicLayout = () => {
 
   const [collapsed, setCollapsed] = useState(false);
   const [theme, setTheme] = useState<'light' | 'dark'>(() => getThemeMode());
-  const [tabs, setTabs] = useState<TabItem[]>(getInitialTabs);
+  const [tabs, setTabs] = useState<LayoutTabItem[]>(getStoredLayoutTabs);
 
   useEffect(() => {
-    window.localStorage.setItem(TABS_STORAGE_KEY, JSON.stringify(tabs));
+    window.localStorage.setItem(LAYOUT_TABS_STORAGE_KEY, JSON.stringify(tabs));
   }, [tabs]);
 
   const currentTabLabel = useMemo(() => {
@@ -81,7 +56,7 @@ const PublicLayout = () => {
         ));
       }
 
-      const nextTab: TabItem = {
+      const nextTab: LayoutTabItem = {
         value: pathname,
         label: currentTabLabel,
         removable: pathname !== DEFAULT_TAB_PATH,

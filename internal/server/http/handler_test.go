@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,6 +13,39 @@ import (
 	"github.com/luck/permission-center-go/internal/biz"
 	"github.com/luck/permission-center-go/internal/config"
 )
+
+func TestSwaggerUIAndOpenAPIDocument(t *testing.T) {
+	server := NewServer(NewHandler(nil))
+
+	redirect := httptest.NewRecorder()
+	server.ServeHTTP(redirect, httptest.NewRequest(http.MethodGet, "/swagger", nil))
+	if redirect.Code != http.StatusMovedPermanently || redirect.Header().Get("Location") != "/swagger/index.html" {
+		t.Fatalf("swagger redirect = %d location=%q", redirect.Code, redirect.Header().Get("Location"))
+	}
+
+	ui := httptest.NewRecorder()
+	server.ServeHTTP(ui, httptest.NewRequest(http.MethodGet, "/swagger/index.html", nil))
+	if ui.Code != http.StatusOK || !strings.Contains(ui.Body.String(), "Swagger UI") {
+		t.Fatalf("swagger UI = %d body=%s", ui.Code, ui.Body.String())
+	}
+
+	documentResponse := httptest.NewRecorder()
+	server.ServeHTTP(documentResponse, httptest.NewRequest(http.MethodGet, "/swagger/openapi.json", nil))
+	if documentResponse.Code != http.StatusOK {
+		t.Fatalf("openapi document = %d body=%s", documentResponse.Code, documentResponse.Body.String())
+	}
+	var document map[string]any
+	if err := json.Unmarshal(documentResponse.Body.Bytes(), &document); err != nil {
+		t.Fatalf("decode OpenAPI document: %v", err)
+	}
+	if document["openapi"] != "3.0.3" {
+		t.Fatalf("openapi version = %#v", document["openapi"])
+	}
+	paths, ok := document["paths"].(map[string]any)
+	if !ok || paths["/v1/authorization/api-endpoints/import-swagger"] == nil {
+		t.Fatalf("Swagger import endpoint missing from document: %#v", document["paths"])
+	}
+}
 
 type testRoleRepo struct {
 	values  map[string]*biz.Role

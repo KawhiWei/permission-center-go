@@ -42,25 +42,6 @@
   margin: 0;
 }
 
-.permission-application-field {
-  min-width: 0;
-}
-
-.permission-application-field-error,
-.permission-application-field-empty {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 6px;
-  color: var(--app-text-muted);
-  font-size: 12px;
-  line-height: 18px;
-}
-
-.permission-application-field-error {
-  color: var(--app-danger);
-}
-
 .permission-load-error {
   display: flex;
   align-items: center;
@@ -462,18 +443,6 @@
   line-height: 20px;
 }
 
-.permission-application-toolbar {
-  align-items: center;
-}
-
-.permission-application-table {
-  min-width: 860px;
-}
-
-.permission-application-form .t-form__item {
-  margin-bottom: 18px;
-}
-
 .permission-delete-warning {
   margin: 0;
   color: var(--app-text-secondary);
@@ -486,7 +455,7 @@
   font-weight: 650;
 }
 
-.permission-select-application-page {
+.permission-select-service-resource-page {
   width: 100%;
   max-width: none;
   min-height: 100%;
@@ -495,14 +464,14 @@
   background: var(--app-page);
 }
 
-.permission-select-application-heading,
-.permission-select-application-card {
+.permission-select-service-resource-heading,
+.permission-select-service-resource-card {
   width: min(100%, 1040px);
   margin-right: auto;
   margin-left: auto;
 }
 
-.permission-select-application-heading {
+.permission-select-service-resource-heading {
   display: flex;
   align-items: flex-end;
   justify-content: space-between;
@@ -510,7 +479,7 @@
   margin-bottom: 18px;
 }
 
-.permission-select-application-heading h1 {
+.permission-select-service-resource-heading h1 {
   margin: 10px 0 0;
   color: var(--app-text);
   font-size: 24px;
@@ -518,7 +487,7 @@
   line-height: 32px;
 }
 
-.permission-select-application-heading p {
+.permission-select-service-resource-heading p {
   max-width: 650px;
   margin: 6px 0 0;
   color: var(--app-text-muted);
@@ -526,18 +495,18 @@
   line-height: 22px;
 }
 
-.permission-select-application-card {
+.permission-select-service-resource-card {
   padding: 20px;
 }
 
-.permission-application-option-grid {
+.permission-service-resource-option-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
   margin-top: 20px;
 }
 
-.permission-application-option {
+.permission-service-resource-option {
   display: flex;
   align-items: flex-start;
   min-width: 0;
@@ -550,17 +519,17 @@
   transition: border-color 140ms ease, background-color 140ms ease;
 }
 
-.permission-application-option:hover {
+.permission-service-resource-option:hover {
   border-color: var(--app-border-strong);
   background: var(--app-surface-subtle);
 }
 
-.permission-application-option.is-selected {
+.permission-service-resource-option.is-selected {
   border-color: var(--app-accent);
   background: var(--app-accent-soft);
 }
 
-.permission-application-option-copy {
+.permission-service-resource-option-copy {
   display: flex;
   min-width: 0;
   flex: 1;
@@ -568,35 +537,35 @@
   gap: 3px;
 }
 
-.permission-application-option-copy strong,
-.permission-application-option-copy code,
-.permission-application-option-copy span {
+.permission-service-resource-option-copy strong,
+.permission-service-resource-option-copy code,
+.permission-service-resource-option-copy span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.permission-application-option-copy strong {
+.permission-service-resource-option-copy strong {
   color: var(--app-text);
   font-size: 15px;
   font-weight: 650;
   line-height: 22px;
 }
 
-.permission-application-option-copy code {
+.permission-service-resource-option-copy code {
   color: var(--app-text-secondary);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   font-size: 12px;
   line-height: 18px;
 }
 
-.permission-application-option-copy span {
+.permission-service-resource-option-copy span {
   color: var(--app-text-muted);
   font-size: 12px;
   line-height: 18px;
 }
 
-.permission-select-application-actions {
+.permission-select-service-resource-actions {
   display: flex;
   justify-content: flex-end;
   margin-top: 24px;
@@ -604,8 +573,8 @@
   border-top: 1px solid var(--app-border);
 }
 
-.permission-select-application-loading,
-.permission-select-application-empty {
+.permission-select-service-resource-loading,
+.permission-select-service-resource-empty {
   display: flex;
   align-items: center;
   justify-content: center;
@@ -616,18 +585,18 @@
   text-align: center;
 }
 
-.permission-select-application-empty strong {
+.permission-select-service-resource-empty strong {
   color: var(--app-text);
   font-size: 16px;
   font-weight: 650;
 }
 
-.permission-select-application-empty span {
+.permission-select-service-resource-empty span {
   font-size: 13px;
   line-height: 20px;
 }
 
-.permission-select-application-error {
+.permission-select-service-resource-error {
   margin-top: 20px;
   padding: 12px 0 0;
   border-top: 1px solid var(--app-border);
@@ -650,7 +619,7 @@
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
-  .permission-application-option-grid {
+  .permission-service-resource-option-grid {
     grid-template-columns: minmax(0, 1fr);
   }
 }
@@ -658,34 +627,21 @@
 @media (max-width: 640px) {
   .permission-page-header,
   .permission-toolbar,
-  .permission-select-application-heading {
+  .permission-select-service-resource-heading {
     align-items: stretch;
     flex-direction: column;
   }
 
-  .permission-select-application-card {
+  .permission-select-service-resource-card {
     padding: 16px;
   }
 
-  .permission-select-application-page {
+  .permission-select-service-resource-page {
     padding: 28px 12px;
   }
 
   .permission-toolbar-meta {
     white-space: normal;
-  }
-
-  .permission-application-field {
-    width: 100%;
-  }
-
-  .permission-application-field .permission-toolbar-form {
-    width: 100%;
-  }
-
-  .permission-application-field .t-select,
-  .permission-application-field .t-select-input {
-    width: min(100%, 280px) !important;
   }
 
   .permission-load-error {

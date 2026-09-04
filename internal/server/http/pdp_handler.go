@@ -37,7 +37,7 @@ func (h *Handler) ListAuthorizationResources(w http.ResponseWriter, r *http.Requ
 		writeError(w, biz.ErrNotFound)
 		return
 	}
-	values, err := h.pdp.ListResources(r.Context(), r.URL.Query().Get("application"))
+	values, err := h.pdp.ListResources(r.Context(), queryServiceResource(r))
 	if err != nil {
 		writeError(w, err)
 		return
@@ -85,7 +85,8 @@ func (h *Handler) UpdateAuthorizationResource(w http.ResponseWriter, r *http.Req
 	}
 	value := request.resource()
 	value.ID = id
-	if request.Application == "" {
+	if request.Application == "" && request.ServiceResource == "" {
+		value.ServiceResource = existing.ServiceResource
 		value.Application = existing.Application
 	}
 	if request.Type == "" && request.ResourceType == "" {
@@ -142,7 +143,7 @@ func (h *Handler) ListAuthorizationActions(w http.ResponseWriter, r *http.Reques
 		writeError(w, biz.ErrNotFound)
 		return
 	}
-	values, err := h.pdp.ListActions(r.Context(), r.URL.Query().Get("application"))
+	values, err := h.pdp.ListActions(r.Context(), queryServiceResource(r))
 	if err != nil {
 		writeError(w, err)
 		return
@@ -190,7 +191,8 @@ func (h *Handler) UpdateAuthorizationAction(w http.ResponseWriter, r *http.Reque
 	}
 	value := request.action()
 	value.ID = id
-	if request.Application == "" {
+	if request.Application == "" && request.ServiceResource == "" {
+		value.ServiceResource = existing.ServiceResource
 		value.Application = existing.Application
 	}
 	if request.Enabled == nil {
@@ -248,12 +250,34 @@ func (h *Handler) CreateAuthorizationAPIEndpoint(w http.ResponseWriter, r *http.
 	writeJSON(w, http.StatusCreated, value)
 }
 
+func (h *Handler) ImportSwaggerAPIEndpoints(w http.ResponseWriter, r *http.Request) {
+	if h.pdp == nil {
+		writeError(w, biz.ErrNotFound)
+		return
+	}
+	var request struct {
+		ServiceResource string `json:"service_resource"`
+		Application     string `json:"application"`
+		SwaggerURL      string `json:"swagger_url"`
+	}
+	if err := decodeJSON(r, &request); err != nil {
+		writeError(w, err)
+		return
+	}
+	result, err := h.pdp.ImportSwaggerAPIEndpoints(h.auditContext(r), biz.SwaggerImportRequest{ServiceResource: request.ServiceResource, Application: request.Application, SwaggerURL: request.SwaggerURL})
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
+}
+
 func (h *Handler) ListAuthorizationAPIEndpoints(w http.ResponseWriter, r *http.Request) {
 	if h.pdp == nil {
 		writeError(w, biz.ErrNotFound)
 		return
 	}
-	values, err := h.pdp.ListAPIEndpoints(r.Context(), r.URL.Query().Get("application"))
+	values, err := h.pdp.ListAPIEndpoints(r.Context(), queryServiceResource(r))
 	if err != nil {
 		writeError(w, err)
 		return
@@ -304,7 +328,8 @@ func (h *Handler) UpdateAuthorizationAPIEndpoint(w http.ResponseWriter, r *http.
 		writeError(w, err)
 		return
 	}
-	if request.Application == "" {
+	if request.Application == "" && request.ServiceResource == "" {
+		value.ServiceResource = existing.ServiceResource
 		value.Application = existing.Application
 	}
 	if request.ResourceID == "" {
@@ -376,7 +401,7 @@ func (h *Handler) ListAuthorizationPolicies(w http.ResponseWriter, r *http.Reque
 		writeError(w, biz.ErrNotFound)
 		return
 	}
-	values, err := h.pdp.ListPolicies(r.Context(), r.URL.Query().Get("application"))
+	values, err := h.pdp.ListPolicies(r.Context(), queryServiceResource(r))
 	if err != nil {
 		writeError(w, err)
 		return
@@ -424,7 +449,8 @@ func (h *Handler) UpdateAuthorizationPolicy(w http.ResponseWriter, r *http.Reque
 	}
 	value := request.policy()
 	value.ID = id
-	if request.Application == "" {
+	if request.Application == "" && request.ServiceResource == "" {
+		value.ServiceResource = existing.ServiceResource
 		value.Application = existing.Application
 	}
 	if value.Code == "" {
@@ -564,14 +590,15 @@ func (h *Handler) SimulateAuthorizationPolicy(w http.ResponseWriter, r *http.Req
 }
 
 type authorizationResourceRequest struct {
-	Application  string           `json:"application"`
-	Code         string           `json:"code"`
-	Type         biz.ResourceType `json:"type"`
-	ResourceType biz.ResourceType `json:"resource_type"`
-	Name         string           `json:"name"`
-	Description  string           `json:"description"`
-	Matcher      string           `json:"matcher"`
-	Enabled      *bool            `json:"enabled"`
+	ServiceResource string           `json:"service_resource"`
+	Application     string           `json:"application"`
+	Code            string           `json:"code"`
+	Type            biz.ResourceType `json:"type"`
+	ResourceType    biz.ResourceType `json:"resource_type"`
+	Name            string           `json:"name"`
+	Description     string           `json:"description"`
+	Matcher         string           `json:"matcher"`
+	Enabled         *bool            `json:"enabled"`
 }
 
 func (r authorizationResourceRequest) resource() *biz.AuthorizationResource {
@@ -583,15 +610,16 @@ func (r authorizationResourceRequest) resource() *biz.AuthorizationResource {
 	if r.Enabled != nil {
 		enabled = *r.Enabled
 	}
-	return &biz.AuthorizationResource{Application: r.Application, Code: r.Code, Type: typeValue, Name: r.Name, Description: r.Description, Matcher: r.Matcher, Enabled: enabled}
+	return &biz.AuthorizationResource{ServiceResource: r.ServiceResource, Application: r.Application, Code: r.Code, Type: typeValue, Name: r.Name, Description: r.Description, Matcher: r.Matcher, Enabled: enabled}
 }
 
 type authorizationActionRequest struct {
-	Application string `json:"application"`
-	Code        string `json:"code"`
-	Name        string `json:"name"`
-	Description string `json:"description"`
-	Enabled     *bool  `json:"enabled"`
+	ServiceResource string `json:"service_resource"`
+	Application     string `json:"application"`
+	Code            string `json:"code"`
+	Name            string `json:"name"`
+	Description     string `json:"description"`
+	Enabled         *bool  `json:"enabled"`
 }
 
 func (r authorizationActionRequest) action() *biz.AuthorizationAction {
@@ -599,10 +627,11 @@ func (r authorizationActionRequest) action() *biz.AuthorizationAction {
 	if r.Enabled != nil {
 		enabled = *r.Enabled
 	}
-	return &biz.AuthorizationAction{Application: r.Application, Code: r.Code, Name: r.Name, Description: r.Description, Enabled: enabled}
+	return &biz.AuthorizationAction{ServiceResource: r.ServiceResource, Application: r.Application, Code: r.Code, Name: r.Name, Description: r.Description, Enabled: enabled}
 }
 
 type authorizationAPIEndpointRequest struct {
+	ServiceResource string              `json:"service_resource"`
 	Application     string              `json:"application"`
 	ServiceCode     string              `json:"service_code"`
 	Method          string              `json:"method"`
@@ -626,10 +655,11 @@ func (r authorizationAPIEndpointRequest) endpoint(id uuid.UUID) (*biz.Authorizat
 	if r.Enabled != nil {
 		enabled = *r.Enabled
 	}
-	return &biz.AuthorizationAPIEndpoint{ID: id, Application: r.Application, ServiceCode: r.ServiceCode, Method: r.Method, PathTemplate: r.PathTemplate, ResourceID: resourceID, ActionID: actionID, EnforcementMode: r.EnforcementMode, Enabled: enabled}, nil
+	return &biz.AuthorizationAPIEndpoint{ID: id, ServiceResource: r.ServiceResource, Application: r.Application, ServiceCode: r.ServiceCode, Method: r.Method, PathTemplate: r.PathTemplate, ResourceID: resourceID, ActionID: actionID, EnforcementMode: r.EnforcementMode, Enabled: enabled}, nil
 }
 
 type authorizationPolicyRequest struct {
+	ServiceResource  string           `json:"service_resource"`
 	Application      string           `json:"application"`
 	Code             string           `json:"code"`
 	Name             string           `json:"name"`
@@ -660,7 +690,7 @@ func (r authorizationPolicyRequest) policy() *biz.AuthorizationPolicy {
 	if r.Enabled != nil {
 		enabled = *r.Enabled
 	}
-	return &biz.AuthorizationPolicy{Application: r.Application, Code: r.Code, Name: r.Name, Description: r.Description, Effect: r.Effect, Priority: priority, ResourceCodes: resourceCodes, ActionCodes: actionCodes, Enabled: enabled}
+	return &biz.AuthorizationPolicy{ServiceResource: r.ServiceResource, Application: r.Application, Code: r.Code, Name: r.Name, Description: r.Description, Effect: r.Effect, Priority: priority, ResourceCodes: resourceCodes, ActionCodes: actionCodes, Enabled: enabled}
 }
 
 type authorizationPolicyBindingsRequest struct {
@@ -691,20 +721,21 @@ func (r authorizationPolicyBindingsRequest) values() []biz.AuthorizationPolicyBi
 }
 
 type authorizationDecisionRequest struct {
-	Application  string            `json:"application"`
-	SubjectID    string            `json:"subject_id"`
-	ResourceCode string            `json:"resource_code"`
-	ResourceType biz.ResourceType  `json:"resource_type"`
-	ResourceID   string            `json:"resource_id"`
-	Action       string            `json:"action"`
-	ActionCode   string            `json:"action_code"`
-	ServiceCode  string            `json:"service_code"`
-	Method       string            `json:"method"`
-	PathTemplate string            `json:"path_template"`
-	Subject      *decisionSubject  `json:"subject"`
-	Resource     *decisionResource `json:"resource"`
-	Request      *decisionHTTP     `json:"request"`
-	Environment  map[string]any    `json:"environment"`
+	ServiceResource string            `json:"service_resource"`
+	Application     string            `json:"application"`
+	SubjectID       string            `json:"subject_id"`
+	ResourceCode    string            `json:"resource_code"`
+	ResourceType    biz.ResourceType  `json:"resource_type"`
+	ResourceID      string            `json:"resource_id"`
+	Action          string            `json:"action"`
+	ActionCode      string            `json:"action_code"`
+	ServiceCode     string            `json:"service_code"`
+	Method          string            `json:"method"`
+	PathTemplate    string            `json:"path_template"`
+	Subject         *decisionSubject  `json:"subject"`
+	Resource        *decisionResource `json:"resource"`
+	Request         *decisionHTTP     `json:"request"`
+	Environment     map[string]any    `json:"environment"`
 }
 
 type decisionSubject struct {
@@ -729,7 +760,7 @@ type decisionHTTP struct {
 }
 
 func (r authorizationDecisionRequest) normalize() biz.DecisionRequest {
-	result := biz.DecisionRequest{Application: r.Application, SubjectID: r.SubjectID, ResourceCode: r.ResourceCode, ResourceType: r.ResourceType, ResourceID: r.ResourceID, Action: r.Action, ServiceCode: r.ServiceCode, Method: r.Method, PathTemplate: r.PathTemplate}
+	result := biz.DecisionRequest{ServiceResource: r.ServiceResource, Application: r.Application, SubjectID: r.SubjectID, ResourceCode: r.ResourceCode, ResourceType: r.ResourceType, ResourceID: r.ResourceID, Action: r.Action, ServiceCode: r.ServiceCode, Method: r.Method, PathTemplate: r.PathTemplate}
 	if result.Action == "" {
 		result.Action = r.ActionCode
 	}

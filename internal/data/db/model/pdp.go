@@ -9,14 +9,15 @@ import (
 // the owning business service.
 type AuthorizationResource struct {
 	BaseFields
-	ID          uuid.UUID
-	Application string
-	Code        string
-	Type        string
-	Name        string
-	Description string
-	Matcher     string
-	Enabled     bool
+	ID              uuid.UUID
+	ServiceResource string
+	Application     string
+	Code            string
+	Type            string
+	Name            string
+	Description     string
+	Matcher         string
+	Enabled         bool
 }
 
 // AuthorizationAction is a business operation that can be selected by a
@@ -24,12 +25,13 @@ type AuthorizationResource struct {
 // rather than being mixed into this model.
 type AuthorizationAction struct {
 	BaseFields
-	ID          uuid.UUID
-	Application string
-	Code        string
-	Name        string
-	Description string
-	Enabled     bool
+	ID              uuid.UUID
+	ServiceResource string
+	Application     string
+	Code            string
+	Name            string
+	Description     string
+	Enabled         bool
 }
 
 // AuthorizationAPIEndpoint binds a normalized business route to a resource
@@ -37,6 +39,7 @@ type AuthorizationAction struct {
 type AuthorizationAPIEndpoint struct {
 	BaseFields
 	ID              uuid.UUID
+	ServiceResource string
 	Application     string
 	ServiceCode     string
 	Method          string
@@ -52,16 +55,17 @@ type AuthorizationAPIEndpoint struct {
 // values and the * wildcard in Phase A.
 type AuthorizationPolicy struct {
 	BaseFields
-	ID            uuid.UUID
-	Application   string
-	Code          string
-	Name          string
-	Description   string
-	Effect        string
-	Priority      int
-	ResourceCodes []string
-	ActionCodes   []string
-	Enabled       bool
+	ID              uuid.UUID
+	ServiceResource string
+	Application     string
+	Code            string
+	Name            string
+	Description     string
+	Effect          string
+	Priority        int
+	ResourceCodes   []string
+	ActionCodes     []string
+	Enabled         bool
 }
 
 // AuthorizationPolicyBinding attaches one policy to a role or a concrete

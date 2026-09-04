@@ -24,6 +24,6 @@ without changing the project configuration:
 PLAYWRIGHT_EXECUTABLE_PATH="/path/to/browser" yarn test:e2e
 ```
 
-The tests seed `permission-center-application` when a selected application is
-needed and assert the user-visible application gate, Header context, role
+The tests seed `permission-center-service-resource` when a selected service
+resource is needed and assert the service-resource gate, Header context, role
 creation flow, and user-role refresh flow.

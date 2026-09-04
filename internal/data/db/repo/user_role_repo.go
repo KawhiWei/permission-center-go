@@ -26,7 +26,7 @@ func NewUserRoleRepository(pool *pgxpool.Pool) *UserRoleRepository {
 }
 
 // ListRoleIDs returns active, non-deleted role IDs assigned to subject in one
-// application. Assignments to disabled/deleted roles are hidden from callers.
+// service resource. Assignments to disabled/deleted roles are hidden from callers.
 func (r *UserRoleRepository) ListRoleIDs(ctx context.Context, subject, application string) ([]string, error) {
 	subject, application, err := normalizeUserRoleScope(subject, application)
 	if err != nil {
@@ -37,7 +37,7 @@ func (r *UserRoleRepository) ListRoleIDs(ctx context.Context, subject, applicati
 		FROM user_roles ur
 		JOIN roles ro ON ro.id = ur.role_id
 		WHERE ur.subject = $1
-		  AND ro.application = $2
+		  AND ro.service_resource = $2
 		  AND ur.is_deleted = FALSE
 		  AND ro.is_deleted = FALSE
 		  AND ro.enabled = TRUE
@@ -94,8 +94,8 @@ func (r *UserRoleRepository) Replace(ctx context.Context, subject, application s
 		err := tx.QueryRow(ctx, `
 			SELECT id
 			FROM roles
-			WHERE id = $1
-			  AND application = $2
+				WHERE id = $1
+				  AND service_resource = $2
 			  AND is_deleted = FALSE
 			  AND enabled = TRUE
 			FOR SHARE`, roleID, application).Scan(&storedID)
@@ -118,7 +118,7 @@ func (r *UserRoleRepository) Replace(ctx context.Context, subject, application s
 		FROM roles ro
 		WHERE ur.role_id = ro.id
 		  AND ur.subject = $1
-		  AND ro.application = $2
+		  AND ro.service_resource = $2
 		  AND ur.is_deleted = FALSE`, subject, application, actor.ID, actor.Name); err != nil {
 		return mapDBError(err)
 	}
@@ -153,8 +153,8 @@ func normalizeUserRoleScope(subject, application string) (string, string, error)
 	if subject == "" || len(subject) > 80 {
 		return "", "", fmt.Errorf("%w: subject must be 1-80 characters", biz.ErrInvalidArgument)
 	}
-	if application == "" || len(application) > 100 {
-		return "", "", fmt.Errorf("%w: application must be 1-100 characters", biz.ErrInvalidArgument)
+	if application == "" || len([]rune(application)) > 128 {
+		return "", "", fmt.Errorf("%w: service_resource must be 1-128 characters", biz.ErrInvalidArgument)
 	}
 	return subject, application, nil
 }

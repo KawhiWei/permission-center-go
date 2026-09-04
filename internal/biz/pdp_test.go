@@ -2,6 +2,8 @@ package biz
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/google/uuid"
@@ -301,5 +303,142 @@ func TestPDPServiceValidatesEndpointScopeAndBindingValues(t *testing.T) {
 	}
 	if err := service.ReplacePolicyBindings(context.Background(), policyID, []AuthorizationPolicyBinding{{SubjectType: SubjectTypeRole, SubjectValue: ""}}); err == nil {
 		t.Fatal("expected invalid binding rejection")
+	}
+}
+
+func TestPDPServiceImportSwaggerAPIEndpoints(t *testing.T) {
+	repository := newMemoryPDPRepository()
+	service := NewPDPService(repository, nil)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/swagger/index.html":
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = w.Write([]byte(`<script>SwaggerUIBundle({ url: "/swagger/openapi.yaml" })</script>`))
+		case "/swagger/openapi.yaml":
+			_, _ = w.Write([]byte(`openapi: 3.0.3
+servers:
+  - url: https://api.example.test/v1
+paths:
+  /users/{id}:
+    get:
+      tags: [UsersController]
+      operationId: getUser
+    delete:
+      tags: [UsersController]
+`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	result, err := service.ImportSwaggerAPIEndpoints(context.Background(), SwaggerImportRequest{Application: "forum", SwaggerURL: server.URL + "/swagger/index.html"})
+	if err != nil {
+		t.Fatalf("import Swagger endpoints: %v", err)
+	}
+	if result.Total != 2 || result.Created != 2 || result.Skipped != 0 {
+		t.Fatalf("unexpected first result: %+v", result)
+	}
+	endpoints, err := service.ListAPIEndpoints(context.Background(), "forum")
+	if err != nil {
+		t.Fatalf("list imported endpoints: %v", err)
+	}
+	if len(endpoints) != 2 {
+		t.Fatalf("unexpected imported endpoints: %+v", endpoints)
+	}
+	for _, endpoint := range endpoints {
+		if endpoint.ServiceCode != "userscontroller" || endpoint.PathTemplate != "/v1/users/{id}" || endpoint.Enabled {
+			t.Fatalf("unexpected imported endpoint: %+v", endpoint)
+		}
+	}
+
+	result, err = service.ImportSwaggerAPIEndpoints(context.Background(), SwaggerImportRequest{Application: "forum", SwaggerURL: server.URL + "/swagger/index.html"})
+	if err != nil {
+		t.Fatalf("repeat Swagger import: %v", err)
+	}
+	if result.Total != 2 || result.Created != 0 || result.Skipped != 2 {
+		t.Fatalf("unexpected repeat result: %+v", result)
+	}
+}
+
+func TestParseSwaggerOperationsSupportsSwagger2JSON(t *testing.T) {
+	operations, err := parseSwaggerOperations([]byte(`{
+  "swagger": "2.0",
+  "basePath": "/api",
+  "paths": {
+    "/health": {"parameters": [{"name":"locale","in":"header"}], "head": {"tags": ["System"]}},
+    "/orders/{id}": {"summary":"update an order", "patch": {"operationId": "OrderController_updateOrder"}}
+  }
+}`))
+	if err != nil {
+		t.Fatalf("parse Swagger 2.0 JSON: %v", err)
+	}
+	if len(operations) != 2 {
+		t.Fatalf("operations = %+v", operations)
+	}
+	if operations[0].Method != "HEAD" || operations[0].PathTemplate != "/api/health" || operations[0].ServiceCode != "system" {
+		t.Fatalf("unexpected tagged operation: %+v", operations[0])
+	}
+	if operations[1].Method != "PATCH" || operations[1].PathTemplate != "/api/orders/{id}" || operations[1].ServiceCode != "ordercontroller" {
+		t.Fatalf("unexpected operation id fallback: %+v", operations[1])
+	}
+}
+
+func TestFetchSwaggerDocumentSupportsExternalInitializerAndConfig(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/swagger-ui/index.html":
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = w.Write([]byte(`<script src="/swagger-ui/swagger-initializer.js"></script>`))
+		case "/swagger-ui/swagger-initializer.js":
+			_, _ = w.Write([]byte(`window.ui = SwaggerUIBundle({ configUrl: "/v3/api-docs/swagger-config" });`))
+		case "/v3/api-docs/swagger-config":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"url":"/v3/api-docs"}`))
+		case "/v3/api-docs":
+			_, _ = w.Write([]byte(`{"openapi":"3.0.1","paths":{"/orders":{"get":{"tags":["OrderController"]}}}}`))
+		case "/swagger/index.html":
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = w.Write([]byte(`<script src="./swagger-ui-bundle.js"></script><script src="index.js"></script>`))
+		case "/swagger/index.js":
+			_, _ = w.Write([]byte(`window.ui = SwaggerUIBundle({ url: "/swagger/v1/swagger.json" });`))
+		case "/swagger/v1/swagger.json":
+			_, _ = w.Write([]byte(`{"swagger":"2.0","paths":{"/health":{"get":{"tags":["SystemController"]}}}}`))
+		case "/escaped/swagger/index.html":
+			w.Header().Set("Content-Type", "text/html")
+			_, _ = w.Write([]byte(`<script>SwaggerUIBundle({ url: "\/escaped\/swagger\/openapi.json" })</script>`))
+		case "/escaped/swagger/openapi.json":
+			_, _ = w.Write([]byte(`{"openapi":"3.0.3","paths":{"/health":{"get":{"tags":["EscapedController"]}}}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	document, err := fetchSwaggerDocument(context.Background(), server.URL+"/swagger-ui/index.html")
+	if err != nil {
+		t.Fatalf("fetch external Swagger UI configuration: %v", err)
+	}
+	operations, err := parseSwaggerOperations(document)
+	if err != nil || len(operations) != 1 || operations[0].ServiceCode != "ordercontroller" {
+		t.Fatalf("external Swagger UI operations = %+v, error = %v", operations, err)
+	}
+
+	document, err = fetchSwaggerDocument(context.Background(), server.URL+"/swagger/index.html")
+	if err != nil {
+		t.Fatalf("fetch index.js Swagger UI configuration: %v", err)
+	}
+	operations, err = parseSwaggerOperations(document)
+	if err != nil || len(operations) != 1 || operations[0].ServiceCode != "systemcontroller" {
+		t.Fatalf("index.js Swagger UI operations = %+v, error = %v", operations, err)
+	}
+
+	document, err = fetchSwaggerDocument(context.Background(), server.URL+"/escaped/swagger/index.html")
+	if err != nil {
+		t.Fatalf("fetch escaped Swagger UI URL: %v", err)
+	}
+	operations, err = parseSwaggerOperations(document)
+	if err != nil || len(operations) != 1 || operations[0].ServiceCode != "escapedcontroller" {
+		t.Fatalf("escaped Swagger UI operations = %+v, error = %v", operations, err)
 	}
 }

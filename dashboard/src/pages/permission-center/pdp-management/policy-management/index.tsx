@@ -9,7 +9,7 @@ import {
   type AuthorizationPolicy,
   type PolicyEffect,
 } from '../../../../api/pdp';
-import { getRequestErrorMessage, PageHeader, useApplicationScope } from '../../shared';
+import { getRequestErrorMessage, PageHeader, useServiceResourceScope } from '../../shared';
 import {
   effectLabel,
   effectOptions,
@@ -26,7 +26,7 @@ import '../../style.less';
 import '../style.less';
 
 const PolicyManagementPage = () => {
-  const { application } = useApplicationScope();
+  const { serviceResource } = useServiceResourceScope();
   const [policies, setPolicies] = useState<AuthorizationPolicy[]>([]);
   const [loading, setLoading] = useState(false);
   const [dialogVisible, setDialogVisible] = useState(false);
@@ -50,8 +50,8 @@ const PolicyManagementPage = () => {
   }, []);
 
   useEffect(() => {
-    void loadPolicies(application);
-  }, [application, loadPolicies]);
+    void loadPolicies(serviceResource);
+  }, [serviceResource, loadPolicies]);
 
   const resetForm = () => {
     setEditingID('');
@@ -114,12 +114,12 @@ const PolicyManagementPage = () => {
         await updateAuthorizationPolicy(editingID, payload);
         notify('success', '策略已更新');
       } else {
-        await createAuthorizationPolicy({ application, code, ...payload });
+        await createAuthorizationPolicy({ service_resource: serviceResource, code, ...payload });
         notify('success', '策略已创建');
       }
       setDialogVisible(false);
       resetForm();
-      await loadPolicies(application);
+      await loadPolicies(serviceResource);
     } catch (error) {
       notify('error', getRequestErrorMessage(error, editingID ? '更新策略失败' : '创建策略失败'));
     } finally {
@@ -137,7 +137,7 @@ const PolicyManagementPage = () => {
       await deleteAuthorizationPolicy(target.id);
       setDeleteTarget(null);
       notify('success', '策略已删除');
-      await loadPolicies(application);
+      await loadPolicies(serviceResource);
     } catch (error) {
       notify('error', getRequestErrorMessage(error, '删除策略失败'));
     } finally {
@@ -152,14 +152,14 @@ const PolicyManagementPage = () => {
         description="策略按优先级计算，命中任意拒绝策略时优先拒绝，未命中默认拒绝。"
         actions={(
           <Space>
-            <Button variant="outline" loading={loading} type="button" onClick={() => void loadPolicies(application)}>刷新</Button>
+            <Button variant="outline" loading={loading} type="button" onClick={() => void loadPolicies(serviceResource)}>刷新</Button>
             <Button theme="primary" type="button" onClick={openCreateDialog}>新建策略</Button>
           </Space>
         )}
       />
 
       <div className="permission-toolbar">
-        <span className="permission-toolbar-meta">当前应用共 {policies.length} 个策略</span>
+        <span className="permission-toolbar-meta">当前服务资源共 {policies.length} 个策略</span>
       </div>
 
       <Card className="permission-card" bordered>
@@ -167,7 +167,7 @@ const PolicyManagementPage = () => {
           <table className="permission-table permission-pdp-table">
             <thead><tr><th>策略</th><th>效果</th><th>优先级</th><th>资源选择器</th><th>动作选择器</th><th>状态</th><th>操作</th></tr></thead>
             <tbody>
-              {loading ? <LoadingRow colSpan={7} loading empty="当前应用暂无策略" /> : policies.length === 0 ? <LoadingRow colSpan={7} loading={false} empty="当前应用暂无策略" /> : policies.map((item) => (
+              {loading ? <LoadingRow colSpan={7} loading empty="当前服务资源暂无策略" /> : policies.length === 0 ? <LoadingRow colSpan={7} loading={false} empty="当前服务资源暂无策略" /> : policies.map((item) => (
                 <tr key={item.id}>
                   <td><div className="permission-table-name">{item.name || '-'}</div><div className="permission-table-code">{item.code || item.id}</div></td>
                   <td><Tag theme={item.effect === 'allow' ? 'success' : 'danger'} variant="light-outline">{effectLabel(item.effect)}</Tag></td>
@@ -196,7 +196,7 @@ const PolicyManagementPage = () => {
         destroyOnClose
       >
         <Form labelAlign="top" className="permission-pdp-dialog-form permission-pdp-dialog-grid">
-          <Form.FormItem label="策略编码" help="应用内稳定唯一。">
+          <Form.FormItem label="策略编码" help="服务资源内稳定唯一。">
             <Input value={form.code} disabled={Boolean(editingID)} maxlength={100} placeholder="例如 post-editor" onChange={(value) => setForm((prev) => ({ ...prev, code: value }))} />
           </Form.FormItem>
           <Form.FormItem label="策略名称">
@@ -239,7 +239,7 @@ const PolicyManagementPage = () => {
       </Dialog>
 
       <SubjectBindingDrawer
-        application={application}
+        serviceResource={serviceResource}
         policy={bindingPolicy}
         visible={Boolean(bindingPolicy)}
         onClose={() => setBindingPolicy(null)}

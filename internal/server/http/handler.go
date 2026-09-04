@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/luck/permission-center-go/internal/auth"
@@ -13,15 +14,47 @@ import (
 )
 
 type Handler struct {
-	permissions  *biz.PermissionService
-	applications *biz.ApplicationService
-	pdp          *biz.PDPService
-	auth         *auth.Service
+	permissions      *biz.PermissionService
+	applications     *biz.ApplicationService
+	serviceResources biz.ServiceResourceCatalog
+	pdp              *biz.PDPService
+	auth             *auth.Service
 }
 
 func (h *Handler) WithApplications(applications *biz.ApplicationService) *Handler {
 	h.applications = applications
 	return h
+}
+
+func (h *Handler) WithServiceResourceCatalog(catalog biz.ServiceResourceCatalog) *Handler {
+	h.serviceResources = catalog
+	return h
+}
+
+func (h *Handler) ListServiceResources(w http.ResponseWriter, r *http.Request) {
+	if h.serviceResources == nil {
+		writeError(w, biz.ErrNotFound)
+		return
+	}
+	values, err := h.serviceResources.List(r.Context())
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": values})
+}
+
+func (h *Handler) GetServiceResource(w http.ResponseWriter, r *http.Request) {
+	if h.serviceResources == nil {
+		writeError(w, biz.ErrNotFound)
+		return
+	}
+	value, err := h.serviceResources.Get(r.Context(), r.PathValue("name"))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, value)
 }
 
 func (h *Handler) CreateApplication(w http.ResponseWriter, r *http.Request) {
@@ -112,16 +145,17 @@ func NewHandler(permissions *biz.PermissionService, authenticators ...*auth.Serv
 
 func (h *Handler) CreateRole(w http.ResponseWriter, r *http.Request) {
 	var request struct {
-		Application string `json:"application"`
-		Code        string `json:"code"`
-		Name        string `json:"name"`
-		Description string `json:"description"`
+		ServiceResource string `json:"service_resource"`
+		Application     string `json:"application"`
+		Code            string `json:"code"`
+		Name            string `json:"name"`
+		Description     string `json:"description"`
 	}
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, err)
 		return
 	}
-	role, err := h.permissions.CreateRole(h.auditContext(r), request.Application, request.Code, request.Name, request.Description)
+	role, err := h.permissions.CreateRole(h.auditContext(r), bizScope(request.ServiceResource, request.Application), request.Code, request.Name, request.Description)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -130,7 +164,7 @@ func (h *Handler) CreateRole(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) ListRoles(w http.ResponseWriter, r *http.Request) {
-	roles, err := h.permissions.ListRoles(r.Context(), r.URL.Query().Get("application"))
+	roles, err := h.permissions.ListRoles(r.Context(), queryServiceResource(r))
 	if err != nil {
 		writeError(w, err)
 		return
@@ -140,24 +174,25 @@ func (h *Handler) ListRoles(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) CreateMenu(w http.ResponseWriter, r *http.Request) {
 	var request struct {
-		Application string       `json:"application"`
-		ParentID    *uuid.UUID   `json:"parent_id"`
-		Code        string       `json:"code"`
-		Name        string       `json:"name"`
-		Description string       `json:"description"`
-		Type        biz.MenuType `json:"type"`
-		Path        string       `json:"path"`
-		Component   string       `json:"component"`
-		APIPath     string       `json:"api_path"`
-		HTTPMethod  string       `json:"http_method"`
-		Icon        string       `json:"icon"`
-		Sort        int          `json:"sort"`
+		ServiceResource string       `json:"service_resource"`
+		Application     string       `json:"application"`
+		ParentID        *uuid.UUID   `json:"parent_id"`
+		Code            string       `json:"code"`
+		Name            string       `json:"name"`
+		Description     string       `json:"description"`
+		Type            biz.MenuType `json:"type"`
+		Path            string       `json:"path"`
+		Component       string       `json:"component"`
+		APIPath         string       `json:"api_path"`
+		HTTPMethod      string       `json:"http_method"`
+		Icon            string       `json:"icon"`
+		Sort            int          `json:"sort"`
 	}
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, err)
 		return
 	}
-	menu, err := h.permissions.CreateMenu(h.auditContext(r), &biz.Menu{Application: request.Application, ParentID: request.ParentID, Code: request.Code, Name: request.Name, Description: request.Description, Type: request.Type, Path: request.Path, Component: request.Component, APIPath: request.APIPath, HTTPMethod: request.HTTPMethod, Icon: request.Icon, Sort: request.Sort})
+	menu, err := h.permissions.CreateMenu(h.auditContext(r), &biz.Menu{ServiceResource: request.ServiceResource, Application: request.Application, ParentID: request.ParentID, Code: request.Code, Name: request.Name, Description: request.Description, Type: request.Type, Path: request.Path, Component: request.Component, APIPath: request.APIPath, HTTPMethod: request.HTTPMethod, Icon: request.Icon, Sort: request.Sort})
 	if err != nil {
 		writeError(w, err)
 		return
@@ -166,7 +201,7 @@ func (h *Handler) CreateMenu(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) MenuTree(w http.ResponseWriter, r *http.Request) {
-	tree, err := h.permissions.MenuTree(r.Context(), r.URL.Query().Get("application"))
+	tree, err := h.permissions.MenuTree(r.Context(), queryServiceResource(r))
 	if err != nil {
 		writeError(w, err)
 		return
@@ -207,7 +242,7 @@ func (h *Handler) ReplaceUserRoles(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	if err := h.permissions.ReplaceUserRoles(h.auditContext(r), r.PathValue("userID"), r.URL.Query().Get("application"), request.RoleIDs); err != nil {
+	if err := h.permissions.ReplaceUserRoles(h.auditContext(r), r.PathValue("userID"), queryServiceResource(r), request.RoleIDs); err != nil {
 		writeError(w, err)
 		return
 	}
@@ -215,7 +250,7 @@ func (h *Handler) ReplaceUserRoles(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) UserRoles(w http.ResponseWriter, r *http.Request) {
-	roleIDs, err := h.permissions.UserRoleIDs(r.Context(), r.PathValue("userID"), r.URL.Query().Get("application"))
+	roleIDs, err := h.permissions.UserRoleIDs(r.Context(), r.PathValue("userID"), queryServiceResource(r))
 	if err != nil {
 		writeError(w, err)
 		return
@@ -247,4 +282,18 @@ func decodeJSON(r *http.Request, target any) error {
 		return fmt.Errorf("%w: request body must contain one JSON value", biz.ErrInvalidArgument)
 	}
 	return nil
+}
+
+func queryServiceResource(r *http.Request) string {
+	if value := strings.TrimSpace(r.URL.Query().Get("service_resource")); value != "" {
+		return value
+	}
+	return strings.TrimSpace(r.URL.Query().Get("application"))
+}
+
+func bizScope(serviceResource, application string) string {
+	if value := strings.TrimSpace(serviceResource); value != "" {
+		return value
+	}
+	return strings.TrimSpace(application)
 }

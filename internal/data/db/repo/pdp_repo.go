@@ -11,17 +11,17 @@ import (
 	"github.com/luck/permission-center-go/internal/data/db/model"
 )
 
-const authorizationResourceColumns = `id, application, code, resource_type, name, description, matcher,
+const authorizationResourceColumns = `id, service_resource, application, code, resource_type, name, description, matcher,
 	enabled, created_by_id, created_by_name, created_at, updated_by_id, updated_by_name, updated_at, is_deleted`
 
-const authorizationActionColumns = `id, application, code, name, description, enabled,
+const authorizationActionColumns = `id, service_resource, application, code, name, description, enabled,
 	created_by_id, created_by_name, created_at, updated_by_id, updated_by_name, updated_at, is_deleted`
 
-const authorizationAPIEndpointColumns = `id, application, service_code, method, path_template,
+const authorizationAPIEndpointColumns = `id, service_resource, application, service_code, method, path_template,
 	resource_id, action_id, enforcement_mode, enabled, created_by_id, created_by_name,
 	created_at, updated_by_id, updated_by_name, updated_at, is_deleted`
 
-const authorizationPolicyColumns = `id, application, code, name, description, effect, priority,
+const authorizationPolicyColumns = `id, service_resource, application, code, name, description, effect, priority,
 	resource_codes, action_codes, enabled, created_by_id, created_by_name, created_at,
 	updated_by_id, updated_by_name, updated_at, is_deleted`
 
@@ -50,13 +50,13 @@ func (r *PDPRepository) CreateResource(ctx context.Context, value *biz.Authoriza
 	actor := biz.AuditActorFromContext(ctx)
 	const query = `
 		INSERT INTO authorization_resources (
-			id, application, code, resource_type, name, description, matcher, enabled,
+			id, service_resource, application, code, resource_type, name, description, matcher, enabled,
 			created_by_id, created_by_name, updated_by_id, updated_by_name, is_deleted
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $9, $10, FALSE)
+		VALUES ($1, $2, $2, $3, $4, $5, $6, $7, $8, $9, $10, $9, $10, FALSE)
 		RETURNING ` + authorizationResourceColumns
 	stored, err := scanAuthorizationResource(r.pool.QueryRow(ctx, query,
-		id, value.Application, value.Code, string(value.Type), value.Name,
+		id, bizScope(value.ServiceResource, value.Application), value.Code, string(value.Type), value.Name,
 		value.Description, value.Matcher, value.Enabled, actor.ID, actor.Name,
 	))
 	if err != nil {
@@ -77,7 +77,7 @@ func (r *PDPRepository) GetResource(ctx context.Context, id uuid.UUID) (*biz.Aut
 }
 
 func (r *PDPRepository) GetResourceByCode(ctx context.Context, application, code string) (*biz.AuthorizationResource, error) {
-	value, err := scanAuthorizationResource(r.pool.QueryRow(ctx, `SELECT `+authorizationResourceColumns+` FROM authorization_resources WHERE application = $1 AND code = $2 AND is_deleted = FALSE`, application, code))
+	value, err := scanAuthorizationResource(r.pool.QueryRow(ctx, `SELECT `+authorizationResourceColumns+` FROM authorization_resources WHERE service_resource = $1 AND code = $2 AND is_deleted = FALSE`, application, code))
 	if err != nil {
 		return nil, mapDBError(err)
 	}
@@ -85,7 +85,7 @@ func (r *PDPRepository) GetResourceByCode(ctx context.Context, application, code
 }
 
 func (r *PDPRepository) ListResources(ctx context.Context, application string) ([]*biz.AuthorizationResource, error) {
-	rows, err := r.pool.Query(ctx, `SELECT `+authorizationResourceColumns+` FROM authorization_resources WHERE application = $1 AND is_deleted = FALSE ORDER BY name, code, id`, application)
+	rows, err := r.pool.Query(ctx, `SELECT `+authorizationResourceColumns+` FROM authorization_resources WHERE service_resource = $1 AND is_deleted = FALSE ORDER BY name, code, id`, application)
 	if err != nil {
 		return nil, mapDBError(err)
 	}
@@ -151,13 +151,13 @@ func (r *PDPRepository) CreateAction(ctx context.Context, value *biz.Authorizati
 	actor := biz.AuditActorFromContext(ctx)
 	const query = `
 		INSERT INTO authorization_actions (
-			id, application, code, name, description, enabled,
+			id, service_resource, application, code, name, description, enabled,
 			created_by_id, created_by_name, updated_by_id, updated_by_name, is_deleted
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $7, $8, FALSE)
+		VALUES ($1, $2, $2, $3, $4, $5, $6, $7, $8, $7, $8, FALSE)
 		RETURNING ` + authorizationActionColumns
 	stored, err := scanAuthorizationAction(r.pool.QueryRow(ctx, query,
-		id, value.Application, value.Code, value.Name, value.Description,
+		id, bizScope(value.ServiceResource, value.Application), value.Code, value.Name, value.Description,
 		value.Enabled, actor.ID, actor.Name,
 	))
 	if err != nil {
@@ -178,7 +178,7 @@ func (r *PDPRepository) GetAction(ctx context.Context, id uuid.UUID) (*biz.Autho
 }
 
 func (r *PDPRepository) GetActionByCode(ctx context.Context, application, code string) (*biz.AuthorizationAction, error) {
-	value, err := scanAuthorizationAction(r.pool.QueryRow(ctx, `SELECT `+authorizationActionColumns+` FROM authorization_actions WHERE application = $1 AND code = $2 AND is_deleted = FALSE`, application, code))
+	value, err := scanAuthorizationAction(r.pool.QueryRow(ctx, `SELECT `+authorizationActionColumns+` FROM authorization_actions WHERE service_resource = $1 AND code = $2 AND is_deleted = FALSE`, application, code))
 	if err != nil {
 		return nil, mapDBError(err)
 	}
@@ -186,7 +186,7 @@ func (r *PDPRepository) GetActionByCode(ctx context.Context, application, code s
 }
 
 func (r *PDPRepository) ListActions(ctx context.Context, application string) ([]*biz.AuthorizationAction, error) {
-	rows, err := r.pool.Query(ctx, `SELECT `+authorizationActionColumns+` FROM authorization_actions WHERE application = $1 AND is_deleted = FALSE ORDER BY name, code, id`, application)
+	rows, err := r.pool.Query(ctx, `SELECT `+authorizationActionColumns+` FROM authorization_actions WHERE service_resource = $1 AND is_deleted = FALSE ORDER BY name, code, id`, application)
 	if err != nil {
 		return nil, mapDBError(err)
 	}
@@ -252,14 +252,14 @@ func (r *PDPRepository) CreateAPIEndpoint(ctx context.Context, value *biz.Author
 	actor := biz.AuditActorFromContext(ctx)
 	const query = `
 		INSERT INTO authorization_api_endpoints (
-			id, application, service_code, method, path_template, resource_id, action_id,
+			id, service_resource, application, service_code, method, path_template, resource_id, action_id,
 			enforcement_mode, enabled, created_by_id, created_by_name, updated_by_id,
 			updated_by_name, is_deleted
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $10, $11, FALSE)
+		VALUES ($1, $2, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $10, $11, FALSE)
 		RETURNING ` + authorizationAPIEndpointColumns
 	stored, err := scanAuthorizationAPIEndpoint(r.pool.QueryRow(ctx, query,
-		id, value.Application, value.ServiceCode, value.Method, value.PathTemplate,
+		id, bizScope(value.ServiceResource, value.Application), value.ServiceCode, value.Method, value.PathTemplate,
 		value.ResourceID, value.ActionID, string(value.EnforcementMode), value.Enabled,
 		actor.ID, actor.Name,
 	))
@@ -281,7 +281,7 @@ func (r *PDPRepository) GetAPIEndpoint(ctx context.Context, id uuid.UUID) (*biz.
 }
 
 func (r *PDPRepository) GetAPIEndpointByRoute(ctx context.Context, application, serviceCode, method, pathTemplate string) (*biz.AuthorizationAPIEndpoint, error) {
-	value, err := scanAuthorizationAPIEndpoint(r.pool.QueryRow(ctx, `SELECT `+authorizationAPIEndpointColumns+` FROM authorization_api_endpoints WHERE application = $1 AND service_code = $2 AND method = $3 AND path_template = $4 AND is_deleted = FALSE`, application, serviceCode, method, pathTemplate))
+	value, err := scanAuthorizationAPIEndpoint(r.pool.QueryRow(ctx, `SELECT `+authorizationAPIEndpointColumns+` FROM authorization_api_endpoints WHERE service_resource = $1 AND service_code = $2 AND method = $3 AND path_template = $4 AND is_deleted = FALSE`, application, serviceCode, method, pathTemplate))
 	if err != nil {
 		return nil, mapDBError(err)
 	}
@@ -289,7 +289,7 @@ func (r *PDPRepository) GetAPIEndpointByRoute(ctx context.Context, application, 
 }
 
 func (r *PDPRepository) ListAPIEndpoints(ctx context.Context, application string) ([]*biz.AuthorizationAPIEndpoint, error) {
-	rows, err := r.pool.Query(ctx, `SELECT `+authorizationAPIEndpointColumns+` FROM authorization_api_endpoints WHERE application = $1 AND is_deleted = FALSE ORDER BY service_code, method, path_template, id`, application)
+	rows, err := r.pool.Query(ctx, `SELECT `+authorizationAPIEndpointColumns+` FROM authorization_api_endpoints WHERE service_resource = $1 AND is_deleted = FALSE ORDER BY service_code, method, path_template, id`, application)
 	if err != nil {
 		return nil, mapDBError(err)
 	}
@@ -364,14 +364,14 @@ func (r *PDPRepository) CreatePolicy(ctx context.Context, value *biz.Authorizati
 	actor := biz.AuditActorFromContext(ctx)
 	const query = `
 		INSERT INTO authorization_policies (
-			id, application, code, name, description, effect, priority, resource_codes,
+			id, service_resource, application, code, name, description, effect, priority, resource_codes,
 			action_codes, enabled, created_by_id, created_by_name, updated_by_id,
 			updated_by_name, is_deleted
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8::JSONB, $9::JSONB, $10, $11, $12, $11, $12, FALSE)
+		VALUES ($1, $2, $2, $3, $4, $5, $6, $7, $8::JSONB, $9::JSONB, $10, $11, $12, $11, $12, FALSE)
 		RETURNING ` + authorizationPolicyColumns
 	stored, err := scanAuthorizationPolicy(r.pool.QueryRow(ctx, query,
-		id, value.Application, value.Code, value.Name, value.Description,
+		id, bizScope(value.ServiceResource, value.Application), value.Code, value.Name, value.Description,
 		string(value.Effect), value.Priority, resourceCodes, actionCodes, value.Enabled,
 		actor.ID, actor.Name,
 	))
@@ -393,7 +393,7 @@ func (r *PDPRepository) GetPolicy(ctx context.Context, id uuid.UUID) (*biz.Autho
 }
 
 func (r *PDPRepository) ListPolicies(ctx context.Context, application string) ([]*biz.AuthorizationPolicy, error) {
-	rows, err := r.pool.Query(ctx, `SELECT `+authorizationPolicyColumns+` FROM authorization_policies WHERE application = $1 AND is_deleted = FALSE ORDER BY priority DESC, name, id`, application)
+	rows, err := r.pool.Query(ctx, `SELECT `+authorizationPolicyColumns+` FROM authorization_policies WHERE service_resource = $1 AND is_deleted = FALSE ORDER BY priority DESC, name, id`, application)
 	if err != nil {
 		return nil, mapDBError(err)
 	}
@@ -523,12 +523,12 @@ func (r *PDPRepository) ListMatchingPolicies(ctx context.Context, application, s
 		roleIDs = []string{}
 	}
 	rows, err := r.pool.Query(ctx, `
-		SELECT DISTINCT p.id, p.application, p.code, p.name, p.description, p.effect, p.priority,
+		SELECT DISTINCT p.id, p.service_resource, p.application, p.code, p.name, p.description, p.effect, p.priority,
 			p.resource_codes, p.action_codes, p.enabled, p.created_by_id, p.created_by_name,
 			p.created_at, p.updated_by_id, p.updated_by_name, p.updated_at, p.is_deleted
 		FROM authorization_policies p
 		JOIN authorization_policy_bindings b ON b.policy_id = p.id
-		WHERE p.application = $1 AND p.enabled = TRUE AND p.is_deleted = FALSE
+		WHERE p.service_resource = $1 AND p.enabled = TRUE AND p.is_deleted = FALSE
 		  AND b.enabled = TRUE AND b.is_deleted = FALSE
 		  AND ((b.subject_type = 'subject' AND b.subject_value = $2)
 		       OR (b.subject_type = 'role' AND b.subject_value = ANY($3::TEXT[])))
@@ -553,7 +553,7 @@ func (r *PDPRepository) ListMatchingPolicies(ctx context.Context, application, s
 
 func scanAuthorizationResource(row rowScanner) (*model.AuthorizationResource, error) {
 	value := &model.AuthorizationResource{}
-	err := row.Scan(&value.ID, &value.Application, &value.Code, &value.Type, &value.Name,
+	err := row.Scan(&value.ID, &value.ServiceResource, &value.Application, &value.Code, &value.Type, &value.Name,
 		&value.Description, &value.Matcher, &value.Enabled, &value.CreatedByID,
 		&value.CreatedByName, &value.CreatedAt, &value.UpdatedByID, &value.UpdatedByName,
 		&value.UpdatedAt, &value.IsDeleted)
@@ -562,7 +562,7 @@ func scanAuthorizationResource(row rowScanner) (*model.AuthorizationResource, er
 
 func scanAuthorizationAction(row rowScanner) (*model.AuthorizationAction, error) {
 	value := &model.AuthorizationAction{}
-	err := row.Scan(&value.ID, &value.Application, &value.Code, &value.Name, &value.Description,
+	err := row.Scan(&value.ID, &value.ServiceResource, &value.Application, &value.Code, &value.Name, &value.Description,
 		&value.Enabled, &value.CreatedByID, &value.CreatedByName, &value.CreatedAt,
 		&value.UpdatedByID, &value.UpdatedByName, &value.UpdatedAt, &value.IsDeleted)
 	return value, err
@@ -570,7 +570,7 @@ func scanAuthorizationAction(row rowScanner) (*model.AuthorizationAction, error)
 
 func scanAuthorizationAPIEndpoint(row rowScanner) (*model.AuthorizationAPIEndpoint, error) {
 	value := &model.AuthorizationAPIEndpoint{}
-	err := row.Scan(&value.ID, &value.Application, &value.ServiceCode, &value.Method,
+	err := row.Scan(&value.ID, &value.ServiceResource, &value.Application, &value.ServiceCode, &value.Method,
 		&value.PathTemplate, &value.ResourceID, &value.ActionID, &value.EnforcementMode,
 		&value.Enabled, &value.CreatedByID, &value.CreatedByName, &value.CreatedAt,
 		&value.UpdatedByID, &value.UpdatedByName, &value.UpdatedAt, &value.IsDeleted)
@@ -580,7 +580,7 @@ func scanAuthorizationAPIEndpoint(row rowScanner) (*model.AuthorizationAPIEndpoi
 func scanAuthorizationPolicy(row rowScanner) (*model.AuthorizationPolicy, error) {
 	value := &model.AuthorizationPolicy{}
 	var resourceCodes, actionCodes []byte
-	err := row.Scan(&value.ID, &value.Application, &value.Code, &value.Name, &value.Description,
+	err := row.Scan(&value.ID, &value.ServiceResource, &value.Application, &value.Code, &value.Name, &value.Description,
 		&value.Effect, &value.Priority, &resourceCodes, &actionCodes, &value.Enabled,
 		&value.CreatedByID, &value.CreatedByName, &value.CreatedAt, &value.UpdatedByID,
 		&value.UpdatedByName, &value.UpdatedAt, &value.IsDeleted)
@@ -608,46 +608,74 @@ func toBizAuthorizationResource(value *model.AuthorizationResource) *biz.Authori
 	if value == nil {
 		return nil
 	}
-	return &biz.AuthorizationResource{
-		BaseFields: baseFields(value.BaseFields), ID: value.ID, Application: value.Application,
+	result := &biz.AuthorizationResource{
+		BaseFields: baseFields(value.BaseFields), ID: value.ID, ServiceResource: value.ServiceResource, Application: value.Application,
 		Code: value.Code, Type: biz.ResourceType(value.Type), Name: value.Name,
 		Description: value.Description, Matcher: value.Matcher, Enabled: value.Enabled,
 	}
+	if result.ServiceResource == "" {
+		result.ServiceResource = result.Application
+	}
+	if result.Application == "" {
+		result.Application = result.ServiceResource
+	}
+	return result
 }
 
 func toBizAuthorizationAction(value *model.AuthorizationAction) *biz.AuthorizationAction {
 	if value == nil {
 		return nil
 	}
-	return &biz.AuthorizationAction{
-		BaseFields: baseFields(value.BaseFields), ID: value.ID, Application: value.Application,
+	result := &biz.AuthorizationAction{
+		BaseFields: baseFields(value.BaseFields), ID: value.ID, ServiceResource: value.ServiceResource, Application: value.Application,
 		Code: value.Code, Name: value.Name, Description: value.Description, Enabled: value.Enabled,
 	}
+	if result.ServiceResource == "" {
+		result.ServiceResource = result.Application
+	}
+	if result.Application == "" {
+		result.Application = result.ServiceResource
+	}
+	return result
 }
 
 func toBizAuthorizationAPIEndpoint(value *model.AuthorizationAPIEndpoint) *biz.AuthorizationAPIEndpoint {
 	if value == nil {
 		return nil
 	}
-	return &biz.AuthorizationAPIEndpoint{
-		BaseFields: baseFields(value.BaseFields), ID: value.ID, Application: value.Application,
+	result := &biz.AuthorizationAPIEndpoint{
+		BaseFields: baseFields(value.BaseFields), ID: value.ID, ServiceResource: value.ServiceResource, Application: value.Application,
 		ServiceCode: value.ServiceCode, Method: value.Method, PathTemplate: value.PathTemplate,
 		ResourceID: value.ResourceID, ActionID: value.ActionID,
 		EnforcementMode: biz.EnforcementMode(value.EnforcementMode), Enabled: value.Enabled,
 	}
+	if result.ServiceResource == "" {
+		result.ServiceResource = result.Application
+	}
+	if result.Application == "" {
+		result.Application = result.ServiceResource
+	}
+	return result
 }
 
 func toBizAuthorizationPolicy(value *model.AuthorizationPolicy) *biz.AuthorizationPolicy {
 	if value == nil {
 		return nil
 	}
-	return &biz.AuthorizationPolicy{
-		BaseFields: baseFields(value.BaseFields), ID: value.ID, Application: value.Application,
+	result := &biz.AuthorizationPolicy{
+		BaseFields: baseFields(value.BaseFields), ID: value.ID, ServiceResource: value.ServiceResource, Application: value.Application,
 		Code: value.Code, Name: value.Name, Description: value.Description,
 		Effect: biz.PolicyEffect(value.Effect), Priority: value.Priority,
 		ResourceCodes: append([]string(nil), value.ResourceCodes...),
 		ActionCodes:   append([]string(nil), value.ActionCodes...), Enabled: value.Enabled,
 	}
+	if result.ServiceResource == "" {
+		result.ServiceResource = result.Application
+	}
+	if result.Application == "" {
+		result.Application = result.ServiceResource
+	}
+	return result
 }
 
 func toBizAuthorizationPolicyBinding(value *model.AuthorizationPolicyBinding) *biz.AuthorizationPolicyBinding {

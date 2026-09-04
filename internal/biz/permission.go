@@ -17,19 +17,23 @@ const (
 
 type Role struct {
 	BaseFields
-	ID          string
-	Application string
-	Code        string
-	Name        string
-	Description string
-	Enabled     bool
+	ID              string `json:"id"`
+	ServiceResource string `json:"service_resource"`
+	// Application is retained as a wire-compatible alias for existing clients.
+	Application string `json:"application,omitempty"`
+	Code        string `json:"code"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Enabled     bool   `json:"enabled"`
 }
 
 // Menu represents a navigational menu or an operation button. ParentID is nil for roots.
 type Menu struct {
 	BaseFields
-	ID          uuid.UUID  `json:"id"`
-	Application string     `json:"application"`
+	ID              uuid.UUID `json:"id"`
+	ServiceResource string    `json:"service_resource"`
+	// Application is retained as a wire-compatible alias for existing clients.
+	Application string     `json:"application,omitempty"`
 	ParentID    *uuid.UUID `json:"parent_id"`
 	Code        string     `json:"code"`
 	Name        string     `json:"name"`
@@ -71,10 +75,11 @@ type UserRoleRepository interface {
 }
 
 type PermissionService struct {
-	roles        RoleRepository
-	menus        MenuRepository
-	userRoles    UserRoleRepository
-	applications ApplicationRepository
+	roles            RoleRepository
+	menus            MenuRepository
+	userRoles        UserRoleRepository
+	applications     ApplicationRepository
+	serviceResources ServiceResourceCatalog
 }
 
 // WithApplicationRepository enables application existence checks without
@@ -84,11 +89,33 @@ func (s *PermissionService) WithApplicationRepository(applications ApplicationRe
 	return s
 }
 
+// WithServiceResourceCatalog makes service-resource metadata the source of
+// truth for scope validation. The old application repository remains a
+// fallback for callers that have not opted into the new catalog yet.
+func (s *PermissionService) WithServiceResourceCatalog(catalog ServiceResourceCatalog) *PermissionService {
+	s.serviceResources = catalog
+	return s
+}
+
 func (s *PermissionService) ensureApplication(ctx context.Context, application string) error {
+	return s.ensureServiceResource(ctx, application)
+}
+
+func (s *PermissionService) ensureServiceResource(ctx context.Context, serviceResource string) error {
+	if s.serviceResources != nil {
+		value, err := s.serviceResources.Get(ctx, serviceResource)
+		if err != nil {
+			return err
+		}
+		if !value.IsActive {
+			return fmt.Errorf("%w: service resource is disabled", ErrConflict)
+		}
+		return nil
+	}
 	if s.applications == nil {
 		return nil
 	}
-	value, err := s.applications.Get(ctx, application)
+	value, err := s.applications.Get(ctx, serviceResource)
 	if err != nil {
 		return err
 	}
@@ -107,38 +134,38 @@ func NewPermissionService(roles RoleRepository, menus MenuRepository, userRoles 
 }
 
 func (s *PermissionService) CreateRole(ctx context.Context, application, code, name, description string) (*Role, error) {
-	application, err := validateApplication(application)
+	serviceResource, err := validateServiceResource(application)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.ensureApplication(ctx, application); err != nil {
+	if err := s.ensureServiceResource(ctx, serviceResource); err != nil {
 		return nil, err
 	}
 	code, name, err = validateCodeAndName(code, name)
 	if err != nil {
 		return nil, err
 	}
-	return s.roles.Create(ctx, &Role{BaseFields: NewBaseFields(AuditActorFromContext(ctx)), Application: application, Code: code, Name: name, Description: strings.TrimSpace(description), Enabled: true})
+	return s.roles.Create(ctx, &Role{BaseFields: NewBaseFields(AuditActorFromContext(ctx)), ServiceResource: serviceResource, Application: serviceResource, Code: code, Name: name, Description: strings.TrimSpace(description), Enabled: true})
 }
 
 func (s *PermissionService) ListRoles(ctx context.Context, application string) ([]*Role, error) {
-	application, err := validateApplication(application)
+	serviceResource, err := validateServiceResource(application)
 	if err != nil {
 		return nil, err
 	}
-	return s.roles.ListByApplication(ctx, application)
+	return s.roles.ListByApplication(ctx, serviceResource)
 }
 
 func (s *PermissionService) CreateMenu(ctx context.Context, menu *Menu) (*Menu, error) {
 	if menu == nil {
 		return nil, fmt.Errorf("%w: menu is required", ErrInvalidArgument)
 	}
-	application, err := validateApplication(menu.Application)
+	serviceResource, err := setServiceResourceScope(menu.ServiceResource, menu.Application)
 	if err != nil {
 		return nil, err
 	}
-	menu.Application = application
-	if err := s.ensureApplication(ctx, application); err != nil {
+	menu.ServiceResource, menu.Application = serviceResource, serviceResource
+	if err := s.ensureServiceResource(ctx, serviceResource); err != nil {
 		return nil, err
 	}
 	code, name, err := validateCodeAndName(menu.Code, menu.Name)
@@ -154,7 +181,7 @@ func (s *PermissionService) CreateMenu(ctx context.Context, menu *Menu) (*Menu, 
 		if err != nil {
 			return nil, err
 		}
-		if parent.Application != menu.Application || parent.Type != MenuTypeMenu {
+		if serviceResourceValue(parent.ServiceResource, parent.Application) != serviceResource || parent.Type != MenuTypeMenu {
 			return nil, fmt.Errorf("%w: parent must be a menu in the same application", ErrConflict)
 		}
 	}
@@ -164,11 +191,11 @@ func (s *PermissionService) CreateMenu(ctx context.Context, menu *Menu) (*Menu, 
 }
 
 func (s *PermissionService) MenuTree(ctx context.Context, application string) ([]*MenuTreeNode, error) {
-	application, err := validateApplication(application)
+	serviceResource, err := validateServiceResource(application)
 	if err != nil {
 		return nil, err
 	}
-	menus, err := s.menus.ListByApplication(ctx, application)
+	menus, err := s.menus.ListByApplication(ctx, serviceResource)
 	if err != nil {
 		return nil, err
 	}
@@ -214,7 +241,7 @@ func (s *PermissionService) GrantRoleMenus(ctx context.Context, roleID string, m
 		if err != nil {
 			return err
 		}
-		if menu.Application != role.Application {
+		if serviceResourceValue(menu.ServiceResource, menu.Application) != serviceResourceValue(role.ServiceResource, role.Application) {
 			return fmt.Errorf("%w: role and menu must belong to the same application", ErrConflict)
 		}
 	}
@@ -242,7 +269,7 @@ func (s *PermissionService) ReplaceUserRoles(ctx context.Context, subject, appli
 	if err != nil {
 		return err
 	}
-	application, err = validateApplication(application)
+	application, err = validateServiceResource(application)
 	if err != nil {
 		return err
 	}
@@ -269,7 +296,7 @@ func (s *PermissionService) UserRoleIDs(ctx context.Context, subject, applicatio
 	if err != nil {
 		return nil, err
 	}
-	application, err = validateApplication(application)
+	application, err = validateServiceResource(application)
 	if err != nil {
 		return nil, err
 	}
@@ -288,11 +315,7 @@ func validateCodeAndName(code, name string) (string, string, error) {
 }
 
 func validateApplication(application string) (string, error) {
-	application = strings.TrimSpace(application)
-	if application == "" || len(application) > 100 {
-		return "", fmt.Errorf("%w: application must be 1-100 characters", ErrInvalidArgument)
-	}
-	return application, nil
+	return validateServiceResource(application)
 }
 
 func validateID(value, name string) (string, error) {

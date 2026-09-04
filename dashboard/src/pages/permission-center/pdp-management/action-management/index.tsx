@@ -8,7 +8,7 @@ import {
   updateAuthorizationAction,
   type AuthorizationAction,
 } from '../../../../api/pdp';
-import { formatDateTime, getRequestErrorMessage, PageHeader, useApplicationScope } from '../../shared';
+import { formatDateTime, getRequestErrorMessage, PageHeader, useServiceResourceScope } from '../../shared';
 import {
   EMPTY_ACTION_FORM,
   LoadingRow,
@@ -20,7 +20,7 @@ import '../../style.less';
 import '../style.less';
 
 const ActionManagementPage = () => {
-  const { application } = useApplicationScope();
+  const { serviceResource } = useServiceResourceScope();
   const [actions, setActions] = useState<AuthorizationAction[]>([]);
   const [loading, setLoading] = useState(false);
   const [dialogVisible, setDialogVisible] = useState(false);
@@ -43,8 +43,8 @@ const ActionManagementPage = () => {
   }, []);
 
   useEffect(() => {
-    void loadActions(application);
-  }, [application, loadActions]);
+    void loadActions(serviceResource);
+  }, [serviceResource, loadActions]);
 
   const resetForm = () => {
     setEditingID('');
@@ -92,7 +92,7 @@ const ActionManagementPage = () => {
         notify('success', '动作已更新');
       } else {
         await createAuthorizationAction({
-          application,
+          service_resource: serviceResource,
           code,
           name,
           description: form.description.trim(),
@@ -102,7 +102,7 @@ const ActionManagementPage = () => {
       }
       setDialogVisible(false);
       resetForm();
-      await loadActions(application);
+      await loadActions(serviceResource);
     } catch (error) {
       notify('error', getRequestErrorMessage(error, editingID ? '更新动作失败' : '创建动作失败'));
     } finally {
@@ -120,7 +120,7 @@ const ActionManagementPage = () => {
       await deleteAuthorizationAction(target.id);
       setDeleteTarget(null);
       notify('success', '动作已删除');
-      await loadActions(application);
+      await loadActions(serviceResource);
     } catch (error) {
       notify('error', getRequestErrorMessage(error, '删除动作失败'));
     } finally {
@@ -135,14 +135,14 @@ const ActionManagementPage = () => {
         description="定义 read、create、update、delete、publish 等业务动作，策略使用动作编码进行匹配。"
         actions={(
           <Space>
-            <Button variant="outline" loading={loading} type="button" onClick={() => void loadActions(application)}>刷新</Button>
+            <Button variant="outline" loading={loading} type="button" onClick={() => void loadActions(serviceResource)}>刷新</Button>
             <Button theme="primary" type="button" onClick={openCreateDialog}>新建动作</Button>
           </Space>
         )}
       />
 
       <div className="permission-toolbar">
-        <span className="permission-toolbar-meta">当前应用共 {actions.length} 个动作</span>
+        <span className="permission-toolbar-meta">当前服务资源共 {actions.length} 个动作</span>
       </div>
 
       <Card className="permission-card" bordered>
@@ -150,7 +150,7 @@ const ActionManagementPage = () => {
           <table className="permission-table permission-pdp-table">
             <thead><tr><th>动作编码</th><th>名称</th><th>描述</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead>
             <tbody>
-              {loading ? <LoadingRow colSpan={6} loading empty="当前应用暂无动作" /> : actions.length === 0 ? <LoadingRow colSpan={6} loading={false} empty="当前应用暂无动作" /> : actions.map((item) => (
+              {loading ? <LoadingRow colSpan={6} loading empty="当前服务资源暂无动作" /> : actions.length === 0 ? <LoadingRow colSpan={6} loading={false} empty="当前服务资源暂无动作" /> : actions.map((item) => (
                 <tr key={item.id}>
                   <td><div className="permission-table-name">{item.name || '-'}</div><div className="permission-table-code">{item.code || item.id}</div></td>
                   <td>{item.name || '-'}</td>

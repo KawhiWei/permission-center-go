@@ -2,10 +2,11 @@ import { Avatar, Dropdown, Button } from 'tdesign-react';
 import type { DropdownOption } from 'tdesign-react';
 import { KeyIcon, PoweroffIcon, UserIcon } from 'tdesign-icons-react';
 
-import { setCachedAuthStatus } from '../../../router/auth';
+import { clearLoginRedirect, setCachedAuthStatus } from '../../../router/auth';
 import { getConfig, logout } from '../../../api/login';
 import { getCurrentUser, type UserInfo } from '../../../api/login';
 import { useEffect, useState } from 'react';
+import { clearStoredLayoutTabs } from '../tab-storage';
 
 const AvatarComponent = () => {
   const [user, setUser] = useState<UserInfo | null>(null);
@@ -70,16 +71,20 @@ const AvatarComponent = () => {
     }
 
     if (dropdownItem.value === 'logout') {
+      // Tabs belong to the authenticated session. Clear them before calling
+      // NexusAuth so a failed logout request cannot leak navigation history
+      // into the next login.
+      clearStoredLayoutTabs();
+      clearLoginRedirect();
+      setCachedAuthStatus(false);
       try {
         const result: { logoutUrl: string } = await logout();
-        setCachedAuthStatus(false);
         if (result.logoutUrl) {
           window.location.href = result.logoutUrl;
         } else {
           window.location.replace('/login');
         }
       } catch {
-        setCachedAuthStatus(false);
         window.location.replace('/login');
       }
     }

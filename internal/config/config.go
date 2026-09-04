@@ -4,20 +4,65 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
 
 type Config struct {
-	HTTP               HTTPConfig               `yaml:"http"`
-	Database           DatabaseConfig           `yaml:"database"`
-	OIDC               OIDCConfig               `yaml:"oidc"`
-	ApplicationCatalog ApplicationCatalogConfig `yaml:"application_catalog"`
+	HTTP                   HTTPConfig                   `yaml:"http"`
+	Database               DatabaseConfig               `yaml:"database"`
+	OIDC                   OIDCConfig                   `yaml:"oidc"`
+	ApplicationCatalog     ApplicationCatalogConfig     `yaml:"application_catalog"`
+	ServiceResourceCatalog ServiceResourceCatalogConfig `yaml:"service_resource_catalog"`
 }
 type ApplicationCatalogConfig struct {
 	Source string `yaml:"source"`
 }
+
+// ServiceResourceCatalogConfig controls where permission scope names are
+// resolved. The local provider adapts the existing applications table; the
+// NexusAuth provider only reads its OpenAPI service-resource directory.
+type ServiceResourceCatalogConfig struct {
+	Source                  string `yaml:"source"`
+	NexusAuthBaseURL        string `yaml:"nexusauth_base_url"`
+	NexusAuthOpenAPIBaseURL string `yaml:"nexusauth_openapi_base_url"`
+	APIKey                  string `yaml:"api_key"`
+	OpenCredential          string `yaml:"open_credential"`
+	Timeout                 string `yaml:"timeout"`
+	TimeoutSeconds          int    `yaml:"timeout_seconds"`
+}
+
+func (c ServiceResourceCatalogConfig) BaseURL() string {
+	if strings.TrimSpace(c.NexusAuthOpenAPIBaseURL) != "" {
+		return strings.TrimSpace(c.NexusAuthOpenAPIBaseURL)
+	}
+	return strings.TrimSpace(c.NexusAuthBaseURL)
+}
+
+func (c ServiceResourceCatalogConfig) Credential() string {
+	if strings.TrimSpace(c.OpenCredential) != "" {
+		return strings.TrimSpace(c.OpenCredential)
+	}
+	return strings.TrimSpace(c.APIKey)
+}
+
+func (c ServiceResourceCatalogConfig) TimeoutDuration() (time.Duration, error) {
+	if c.TimeoutSeconds > 0 {
+		return time.Duration(c.TimeoutSeconds) * time.Second, nil
+	}
+	if strings.TrimSpace(c.Timeout) == "" {
+		return 5 * time.Second, nil
+	}
+	duration, err := time.ParseDuration(strings.TrimSpace(c.Timeout))
+	if err != nil || duration <= 0 {
+		return 0, fmt.Errorf("service_resource_catalog.timeout must be a positive duration")
+	}
+	return duration, nil
+}
+
 type HTTPConfig struct {
 	Addr string `yaml:"addr"`
 }
@@ -69,6 +114,30 @@ func Load(path string) (*Config, error) {
 	if cfg.ApplicationCatalog.Source != "local" && cfg.ApplicationCatalog.Source != "nexusauth" {
 		return nil, fmt.Errorf("application_catalog.source must be local or nexusauth")
 	}
+	if err := applyServiceResourceCatalogEnv(&cfg.ServiceResourceCatalog); err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(cfg.ServiceResourceCatalog.Source) == "" {
+		cfg.ServiceResourceCatalog.Source = cfg.ApplicationCatalog.Source
+	}
+	if cfg.ServiceResourceCatalog.Source == "" {
+		cfg.ServiceResourceCatalog.Source = "local"
+	}
+	cfg.ServiceResourceCatalog.Source = strings.ToLower(strings.TrimSpace(cfg.ServiceResourceCatalog.Source))
+	if cfg.ServiceResourceCatalog.Source != "local" && cfg.ServiceResourceCatalog.Source != "nexusauth" {
+		return nil, fmt.Errorf("service_resource_catalog.source must be local or nexusauth")
+	}
+	if _, err := cfg.ServiceResourceCatalog.TimeoutDuration(); err != nil {
+		return nil, err
+	}
+	if cfg.ServiceResourceCatalog.Source == "nexusauth" {
+		if err := validateHTTPURL(cfg.ServiceResourceCatalog.BaseURL(), "service_resource_catalog.nexusauth_base_url"); err != nil {
+			return nil, err
+		}
+		if cfg.ServiceResourceCatalog.Credential() == "" {
+			return nil, fmt.Errorf("service_resource_catalog.api_key or service_resource_catalog.open_credential is required when source is nexusauth")
+		}
+	}
 	if len(cfg.OIDC.Scopes) == 0 {
 		cfg.OIDC.Scopes = []string{"openid", "profile", "email"}
 	}
@@ -82,6 +151,35 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 	return &cfg, nil
+}
+
+func applyServiceResourceCatalogEnv(cfg *ServiceResourceCatalogConfig) error {
+	if value := os.Getenv("PERMISSION_CENTER_SERVICE_RESOURCE_CATALOG_SOURCE"); value != "" {
+		cfg.Source = value
+	}
+	if value := os.Getenv("PERMISSION_CENTER_SERVICE_RESOURCE_CATALOG_NEXUSAUTH_BASE_URL"); value != "" {
+		cfg.NexusAuthBaseURL = value
+	}
+	if value := os.Getenv("PERMISSION_CENTER_SERVICE_RESOURCE_CATALOG_NEXUSAUTH_OPENAPI_BASE_URL"); value != "" {
+		cfg.NexusAuthOpenAPIBaseURL = value
+	}
+	if value := os.Getenv("PERMISSION_CENTER_SERVICE_RESOURCE_CATALOG_API_KEY"); value != "" {
+		cfg.APIKey = value
+	}
+	if value := os.Getenv("PERMISSION_CENTER_SERVICE_RESOURCE_CATALOG_OPEN_CREDENTIAL"); value != "" {
+		cfg.OpenCredential = value
+	}
+	if value := os.Getenv("PERMISSION_CENTER_SERVICE_RESOURCE_CATALOG_TIMEOUT"); value != "" {
+		cfg.Timeout = value
+	}
+	if value := os.Getenv("PERMISSION_CENTER_SERVICE_RESOURCE_CATALOG_TIMEOUT_SECONDS"); value != "" {
+		parsed, err := strconv.Atoi(strings.TrimSpace(value))
+		if err != nil || parsed <= 0 {
+			return fmt.Errorf("service_resource_catalog.timeout_seconds must be a positive integer")
+		}
+		cfg.TimeoutSeconds = parsed
+	}
+	return nil
 }
 
 func applyOIDCEnv(cfg *OIDCConfig) {

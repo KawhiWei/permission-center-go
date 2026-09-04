@@ -1,38 +1,22 @@
 import request from './request';
 
-export const APPLICATION_STORAGE_KEY = 'permission-center-application';
-export const APPLICATION_CHANGE_EVENT = 'permission-center-application-change';
-export const DEFAULT_APPLICATION = '';
+export const SERVICE_RESOURCE_STORAGE_KEY = 'permission-center-service-resource';
+export const SERVICE_RESOURCE_CHANGE_EVENT = 'permission-center-service-resource-change';
+export const DEFAULT_SERVICE_RESOURCE = '';
 
-export type Application = {
-  application: string;
+export type ServiceResource = {
+  id: string;
   name: string;
+  displayName: string;
+  audience: string;
   description: string;
-  enabled: boolean;
-  createdById?: string;
-  createdByName?: string;
+  isActive: boolean;
   createdAt?: string;
-  updatedById?: string;
-  updatedByName?: string;
-  updatedAt?: string;
-  isDeleted?: boolean;
-};
-
-export type CreateApplicationRequest = {
-  application: string;
-  name: string;
-  description?: string;
-};
-
-export type UpdateApplicationRequest = {
-  name: string;
-  description?: string;
-  enabled: boolean;
 };
 
 export type Role = {
   id: string;
-  application: string;
+  serviceResource: string;
   code: string;
   name: string;
   description: string;
@@ -49,7 +33,7 @@ export type MenuType = 'menu' | 'button';
 
 export type Menu = {
   id: string;
-  application: string;
+  serviceResource: string;
   parentId: string | null;
   code: string;
   name: string;
@@ -72,14 +56,14 @@ export type Menu = {
 };
 
 export type CreateRoleRequest = {
-  application: string;
+  service_resource: string;
   code: string;
   name: string;
   description?: string;
 };
 
 export type CreateMenuRequest = {
-  application: string;
+  service_resource: string;
   parent_id: string | null;
   code: string;
   name: string;
@@ -130,38 +114,34 @@ const rawDate = (record: RawRecord, ...keys: string[]): string | undefined => {
   return value || undefined;
 };
 
+const normalizeServiceResource = (value: unknown): ServiceResource => {
+  const record = (value && typeof value === 'object' ? value : {}) as RawRecord;
+  return {
+    id: rawString(record, 'id', 'ID'),
+    name: rawString(record, 'name', 'Name'),
+    displayName: rawString(record, 'display_name', 'displayName', 'DisplayName'),
+    audience: rawString(record, 'audience', 'Audience'),
+    description: rawString(record, 'description', 'Description'),
+    isActive: rawBoolean(record, 'is_active', 'isActive', 'IsActive'),
+    createdAt: rawDate(record, 'created_at', 'createdAt', 'CreatedAt'),
+  };
+};
+
 const normalizeRole = (value: unknown): Role => {
   const record = (value && typeof value === 'object' ? value : {}) as RawRecord;
   return {
     id: rawString(record, 'id', 'ID'),
-    application: rawString(record, 'application', 'Application'),
+    serviceResource: rawString(record, 'service_resource', 'serviceResource', 'ServiceResource'),
     code: rawString(record, 'code', 'Code'),
     name: rawString(record, 'name', 'Name'),
     description: rawString(record, 'description', 'Description'),
     enabled: rawBoolean(record, 'enabled', 'Enabled'),
-    createdById: rawString(record, 'created_by_id', 'CreatedByID') || undefined,
-    createdByName: rawString(record, 'created_by_name', 'CreatedByName') || undefined,
-    createdAt: rawDate(record, 'created_at', 'CreatedAt'),
-    updatedById: rawString(record, 'updated_by_id', 'UpdatedByID') || undefined,
-    updatedByName: rawString(record, 'updated_by_name', 'UpdatedByName') || undefined,
-    updatedAt: rawDate(record, 'updated_at', 'UpdatedAt'),
-  };
-};
-
-const normalizeApplication = (value: unknown): Application => {
-  const record = (value && typeof value === 'object' ? value : {}) as RawRecord;
-  return {
-    application: rawString(record, 'application', 'Application'),
-    name: rawString(record, 'name', 'Name'),
-    description: rawString(record, 'description', 'Description'),
-    enabled: rawBoolean(record, 'enabled', 'Enabled'),
-    createdById: rawString(record, 'created_by_id', 'CreatedByID') || undefined,
-    createdByName: rawString(record, 'created_by_name', 'CreatedByName') || undefined,
-    createdAt: rawDate(record, 'created_at', 'CreatedAt'),
-    updatedById: rawString(record, 'updated_by_id', 'UpdatedByID') || undefined,
-    updatedByName: rawString(record, 'updated_by_name', 'UpdatedByName') || undefined,
-    updatedAt: rawDate(record, 'updated_at', 'UpdatedAt'),
-    isDeleted: rawBoolean(record, 'is_deleted', 'IsDeleted'),
+    createdById: rawString(record, 'created_by_id', 'createdById', 'CreatedByID') || undefined,
+    createdByName: rawString(record, 'created_by_name', 'createdByName', 'CreatedByName') || undefined,
+    createdAt: rawDate(record, 'created_at', 'createdAt', 'CreatedAt'),
+    updatedById: rawString(record, 'updated_by_id', 'updatedById', 'UpdatedByID') || undefined,
+    updatedByName: rawString(record, 'updated_by_name', 'updatedByName', 'UpdatedByName') || undefined,
+    updatedAt: rawDate(record, 'updated_at', 'updatedAt', 'UpdatedAt'),
   };
 };
 
@@ -170,11 +150,11 @@ const normalizeMenu = (value: unknown): Menu => {
   const type = rawString(record, 'type', 'Type') === 'button' ? 'button' : 'menu';
   const childrenValue = record.children ?? record.Children;
   const children = Array.isArray(childrenValue) ? childrenValue.map(normalizeMenu) : [];
-  const parentID = rawString(record, 'parent_id', 'ParentID');
+  const parentID = rawString(record, 'parent_id', 'parentId', 'ParentID');
 
   return {
     id: rawString(record, 'id', 'ID'),
-    application: rawString(record, 'application', 'Application'),
+    serviceResource: rawString(record, 'service_resource', 'serviceResource', 'ServiceResource'),
     parentId: parentID || null,
     code: rawString(record, 'code', 'Code'),
     name: rawString(record, 'name', 'Name'),
@@ -182,17 +162,17 @@ const normalizeMenu = (value: unknown): Menu => {
     type,
     path: rawString(record, 'path', 'Path', 'route', 'Route'),
     component: rawString(record, 'component', 'Component'),
-    apiPath: rawString(record, 'api_path', 'APIPath', 'action', 'Action'),
-    httpMethod: rawString(record, 'http_method', 'HTTPMethod'),
+    apiPath: rawString(record, 'api_path', 'apiPath', 'APIPath', 'action', 'Action'),
+    httpMethod: rawString(record, 'http_method', 'httpMethod', 'HTTPMethod'),
     icon: rawString(record, 'icon', 'Icon'),
-    sort: rawNumber(record, 'sort', 'Sort', 'sort_order', 'SortOrder'),
+    sort: rawNumber(record, 'sort', 'Sort', 'sort_order', 'sortOrder', 'SortOrder'),
     enabled: rawBoolean(record, 'enabled', 'Enabled'),
-    createdById: rawString(record, 'created_by_id', 'CreatedByID') || undefined,
-    createdByName: rawString(record, 'created_by_name', 'CreatedByName') || undefined,
-    createdAt: rawDate(record, 'created_at', 'CreatedAt'),
-    updatedById: rawString(record, 'updated_by_id', 'UpdatedByID') || undefined,
-    updatedByName: rawString(record, 'updated_by_name', 'UpdatedByName') || undefined,
-    updatedAt: rawDate(record, 'updated_at', 'UpdatedAt'),
+    createdById: rawString(record, 'created_by_id', 'createdById', 'CreatedByID') || undefined,
+    createdByName: rawString(record, 'created_by_name', 'createdByName', 'CreatedByName') || undefined,
+    createdAt: rawDate(record, 'created_at', 'createdAt', 'CreatedAt'),
+    updatedById: rawString(record, 'updated_by_id', 'updatedById', 'UpdatedByID') || undefined,
+    updatedByName: rawString(record, 'updated_by_name', 'updatedByName', 'UpdatedByName') || undefined,
+    updatedAt: rawDate(record, 'updated_at', 'updatedAt', 'UpdatedAt'),
     children,
   };
 };
@@ -202,7 +182,8 @@ const readItems = (value: unknown): unknown[] => {
     return value;
   }
   if (value && typeof value === 'object') {
-    const items = (value as RawRecord).items;
+    const record = value as RawRecord;
+    const items = record.items ?? record.Items ?? record.data ?? record.Data;
     return Array.isArray(items) ? items : [];
   }
   return [];
@@ -213,7 +194,7 @@ const readItem = (value: unknown): unknown => {
     return value;
   }
   const record = value as RawRecord;
-  return record.item ?? record.data ?? value;
+  return record.item ?? record.Item ?? record.data ?? record.Data ?? value;
 };
 
 const readIDs = (value: unknown, key: 'menu_ids' | 'role_ids'): string[] => {
@@ -224,27 +205,27 @@ const readIDs = (value: unknown, key: 'menu_ids' | 'role_ids'): string[] => {
   return Array.isArray(values) ? values.filter((item): item is string => typeof item === 'string') : [];
 };
 
-export const getStoredApplication = (): string => {
+export const getStoredServiceResource = (): string => {
   if (typeof window === 'undefined') {
-    return DEFAULT_APPLICATION;
+    return DEFAULT_SERVICE_RESOURCE;
   }
   try {
-    return window.localStorage.getItem(APPLICATION_STORAGE_KEY)?.trim() || DEFAULT_APPLICATION;
+    return window.localStorage.getItem(SERVICE_RESOURCE_STORAGE_KEY)?.trim() || DEFAULT_SERVICE_RESOURCE;
   } catch {
-    return DEFAULT_APPLICATION;
+    return DEFAULT_SERVICE_RESOURCE;
   }
 };
 
-export const setStoredApplication = (application: string): string => {
-  const next = application.trim();
+export const setStoredServiceResource = (serviceResource: string): string => {
+  const next = serviceResource.trim();
   if (typeof window !== 'undefined') {
     try {
       if (next) {
-        window.localStorage.setItem(APPLICATION_STORAGE_KEY, next);
+        window.localStorage.setItem(SERVICE_RESOURCE_STORAGE_KEY, next);
       } else {
-        window.localStorage.removeItem(APPLICATION_STORAGE_KEY);
+        window.localStorage.removeItem(SERVICE_RESOURCE_STORAGE_KEY);
       }
-      window.dispatchEvent(new CustomEvent(APPLICATION_CHANGE_EVENT, { detail: next }));
+      window.dispatchEvent(new CustomEvent(SERVICE_RESOURCE_CHANGE_EVENT, { detail: next }));
     } catch {
       // Browsers can disable localStorage in private or restricted contexts.
     }
@@ -252,54 +233,35 @@ export const setStoredApplication = (application: string): string => {
   return next;
 };
 
-export const listApplications = async (): Promise<Application[]> => {
-  const response = await request.get<unknown>('/v1/applications');
-  return readItems(response).map(normalizeApplication);
+export const listServiceResources = async (): Promise<ServiceResource[]> => {
+  const response = await request.get<unknown>('/v1/service-resources');
+  return readItems(response).map(normalizeServiceResource);
 };
 
-export const getApplication = async (application: string): Promise<Application> => {
-  const key = application.trim();
-  const response = await request.get<unknown>(`/v1/applications/${encodeURIComponent(key)}`);
-  return normalizeApplication(readItem(response));
+export const getServiceResource = async (name: string): Promise<ServiceResource> => {
+  const key = name.trim();
+  const response = await request.get<unknown>(`/v1/service-resources/${encodeURIComponent(key)}`);
+  return normalizeServiceResource(readItem(response));
 };
 
-export const createApplication = async (payload: CreateApplicationRequest): Promise<Application> => {
-  const response = await request.post<unknown>('/v1/applications', payload);
-  return normalizeApplication(readItem(response));
-};
-
-export const updateApplication = async (
-  application: string,
-  payload: UpdateApplicationRequest,
-): Promise<Application> => {
-  const key = application.trim();
-  const response = await request.put<unknown>(`/v1/applications/${encodeURIComponent(key)}`, payload);
-  return normalizeApplication(readItem(response));
-};
-
-export const deleteApplication = async (application: string): Promise<void> => {
-  const key = application.trim();
-  await request.delete<unknown>(`/v1/applications/${encodeURIComponent(key)}`);
-};
-
-export const listRoles = async (application: string): Promise<Role[]> => {
-  const response = await request.get<unknown>(`/v1/roles?application=${encodeURIComponent(application.trim())}`);
+export const listRoles = async (serviceResource: string): Promise<Role[]> => {
+  const response = await request.get<unknown>(`/v1/roles?service_resource=${encodeURIComponent(serviceResource.trim())}`);
   return readItems(response).map(normalizeRole);
 };
 
 export const createRole = async (payload: CreateRoleRequest): Promise<Role> => {
   const response = await request.post<unknown>('/v1/roles', payload);
-  return normalizeRole(response);
+  return normalizeRole(readItem(response));
 };
 
-export const getMenuTree = async (application: string): Promise<Menu[]> => {
-  const response = await request.get<unknown>(`/v1/menus/tree?application=${encodeURIComponent(application.trim())}`);
+export const getMenuTree = async (serviceResource: string): Promise<Menu[]> => {
+  const response = await request.get<unknown>(`/v1/menus/tree?service_resource=${encodeURIComponent(serviceResource.trim())}`);
   return readItems(response).map(normalizeMenu);
 };
 
 export const createMenu = async (payload: CreateMenuRequest): Promise<Menu> => {
   const response = await request.post<unknown>('/v1/menus', payload);
-  return normalizeMenu(response);
+  return normalizeMenu(readItem(response));
 };
 
 export const getRoleMenuIDs = async (roleID: string): Promise<string[]> => {
@@ -311,16 +273,16 @@ export const replaceRoleMenus = async (roleID: string, menuIDs: string[]): Promi
   await request.put<unknown>(`/v1/roles/${encodeURIComponent(roleID)}/menus`, { menu_ids: menuIDs });
 };
 
-export const getUserRoleIDs = async (userID: string, application: string): Promise<string[]> => {
+export const getUserRoleIDs = async (userID: string, serviceResource: string): Promise<string[]> => {
   const response = await request.get<unknown>(
-    `/v1/users/${encodeURIComponent(userID)}/roles?application=${encodeURIComponent(application.trim())}`,
+    `/v1/users/${encodeURIComponent(userID)}/roles?service_resource=${encodeURIComponent(serviceResource.trim())}`,
   );
   return readIDs(response, 'role_ids');
 };
 
-export const replaceUserRoles = async (userID: string, application: string, roleIDs: string[]): Promise<void> => {
+export const replaceUserRoles = async (userID: string, serviceResource: string, roleIDs: string[]): Promise<void> => {
   await request.put<unknown>(
-    `/v1/users/${encodeURIComponent(userID)}/roles?application=${encodeURIComponent(application.trim())}`,
+    `/v1/users/${encodeURIComponent(userID)}/roles?service_resource=${encodeURIComponent(serviceResource.trim())}`,
     { role_ids: roleIDs },
   );
 };

@@ -13,19 +13,20 @@ const (
 // denotes a root menu; button roots are rejected by the database constraint.
 type Menu struct {
 	BaseFields
-	ID          uuid.UUID
-	Application string
-	ParentID    *uuid.UUID
-	Code        string
-	Name        string
-	Description string
-	Type        MenuType
-	Path        string
-	Component   string
-	APIPath     string
-	HTTPMethod  string
-	Icon        string
-	Sort        int
-	Metadata    []byte
-	Enabled     bool
+	ID              uuid.UUID
+	ServiceResource string
+	Application     string
+	ParentID        *uuid.UUID
+	Code            string
+	Name            string
+	Description     string
+	Type            MenuType
+	Path            string
+	Component       string
+	APIPath         string
+	HTTPMethod      string
+	Icon            string
+	Sort            int
+	Metadata        []byte
+	Enabled         bool
 }

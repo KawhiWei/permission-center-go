@@ -1,6 +1,6 @@
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
 import { checkAuth } from '../api/login';
-import { getStoredApplication } from '../api/permission';
+import { getStoredServiceResource } from '../api/permission';
 
 let cachedAuthStatus: boolean | null = null;
 
@@ -35,7 +35,7 @@ const isReservedRedirect = (path: string) => (
   path === '/'
   || path === '/login'
   || path === '/auth/callback'
-  || path === '/select-application'
+  || path === '/select-service-resource'
 );
 
 export const getSafePostLoginRedirect = (redirect: string | null | undefined) => {
@@ -47,14 +47,14 @@ export const getSafePostLoginRedirect = (redirect: string | null | undefined) =>
   return safeRedirect;
 };
 
-export const getApplicationSelectionPath = (redirect: string | null | undefined) => {
+export const getServiceResourceSelectionPath = (redirect: string | null | undefined) => {
   const safeRedirect = getSafePostLoginRedirect(redirect);
   return safeRedirect
-    ? `/select-application?redirect=${encodeURIComponent(safeRedirect)}`
-    : '/select-application';
+    ? `/select-service-resource?redirect=${encodeURIComponent(safeRedirect)}`
+    : '/select-service-resource';
 };
 
-export const getPostApplicationSelectionPath = (redirect: string | null | undefined) => (
+export const getPostServiceResourceSelectionPath = (redirect: string | null | undefined) => (
   getSafePostLoginRedirect(redirect) || '/dashboard'
 );
 
@@ -89,11 +89,23 @@ export const consumeLoginRedirect = () => {
   }
 };
 
+export const clearLoginRedirect = () => {
+  if (typeof window === 'undefined') {
+    return;
+  }
+
+  try {
+    window.localStorage.removeItem(LOGIN_REDIRECT_STORAGE_KEY);
+  } catch {
+    // Browsers can disable localStorage in private or restricted contexts.
+  }
+};
+
 export const getAuthenticatedLandingPath = (redirect: string | null | undefined) => {
   const safeRedirect = getSafePostLoginRedirect(redirect);
-  return getStoredApplication()
+  return getStoredServiceResource()
     ? safeRedirect || '/dashboard'
-    : getApplicationSelectionPath(safeRedirect);
+    : getServiceResourceSelectionPath(safeRedirect);
 };
 
 const getRedirectPath = (location: { pathname: string; search?: string; hash?: string }) => {
@@ -115,13 +127,13 @@ export const RequireAuth = () => {
   return <Outlet />;
 };
 
-export const RequireApplication = () => {
+export const RequireServiceResource = () => {
   const location = useLocation();
 
-  if (!getStoredApplication()) {
+  if (!getStoredServiceResource()) {
     return (
       <Navigate
-        to={getApplicationSelectionPath(getRedirectPath(location))}
+        to={getServiceResourceSelectionPath(getRedirectPath(location))}
         replace
         state={{ from: location }}
       />

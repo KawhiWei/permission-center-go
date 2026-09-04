@@ -4,6 +4,11 @@ import "net/http"
 
 func NewServer(handler *Handler, authMiddleware ...func(http.Handler) http.Handler) *http.ServeMux {
 	mux := http.NewServeMux()
+	mux.Handle("GET /swagger/", SwaggerUI())
+	mux.HandleFunc("GET /swagger/openapi.json", handler.OpenAPIDocument)
+	mux.HandleFunc("GET /swagger", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/swagger/index.html", http.StatusMovedPermanently)
+	})
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
@@ -26,6 +31,8 @@ func NewServer(handler *Handler, authMiddleware ...func(http.Handler) http.Handl
 	mux.Handle("GET /v1/applications/{application}", protect(http.HandlerFunc(handler.GetApplication)))
 	mux.Handle("PUT /v1/applications/{application}", protect(http.HandlerFunc(handler.UpdateApplication)))
 	mux.Handle("DELETE /v1/applications/{application}", protect(http.HandlerFunc(handler.DeleteApplication)))
+	mux.Handle("GET /v1/service-resources", protect(http.HandlerFunc(handler.ListServiceResources)))
+	mux.Handle("GET /v1/service-resources/{name}", protect(http.HandlerFunc(handler.GetServiceResource)))
 	mux.Handle("GET /v1/roles", protect(http.HandlerFunc(handler.ListRoles)))
 	mux.Handle("POST /v1/menus", protect(http.HandlerFunc(handler.CreateMenu)))
 	mux.Handle("GET /v1/menus/tree", protect(http.HandlerFunc(handler.MenuTree)))
@@ -52,6 +59,7 @@ func NewServer(handler *Handler, authMiddleware ...func(http.Handler) http.Handl
 	mux.Handle("DELETE /v1/authorization/actions/{id}", protect(http.HandlerFunc(handler.DeleteAuthorizationAction)))
 
 	mux.Handle("POST /v1/authorization/api-endpoints", protect(http.HandlerFunc(handler.CreateAuthorizationAPIEndpoint)))
+	mux.Handle("POST /v1/authorization/api-endpoints/import-swagger", protect(http.HandlerFunc(handler.ImportSwaggerAPIEndpoints)))
 	mux.Handle("GET /v1/authorization/api-endpoints", protect(http.HandlerFunc(handler.ListAuthorizationAPIEndpoints)))
 	mux.Handle("GET /v1/authorization/api-endpoints/{id}", protect(http.HandlerFunc(handler.GetAuthorizationAPIEndpoint)))
 	mux.Handle("PUT /v1/authorization/api-endpoints/{id}", protect(http.HandlerFunc(handler.UpdateAuthorizationAPIEndpoint)))

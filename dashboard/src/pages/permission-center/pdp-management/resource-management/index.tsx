@@ -9,7 +9,7 @@ import {
   type AuthorizationResource,
   type ResourceType,
 } from '../../../../api/pdp';
-import { formatDateTime, getRequestErrorMessage, PageHeader, useApplicationScope } from '../../shared';
+import { formatDateTime, getRequestErrorMessage, PageHeader, useServiceResourceScope } from '../../shared';
 import {
   EMPTY_RESOURCE_FORM,
   LoadingRow,
@@ -23,7 +23,7 @@ import '../../style.less';
 import '../style.less';
 
 const ResourceManagementPage = () => {
-  const { application } = useApplicationScope();
+  const { serviceResource } = useServiceResourceScope();
   const [resources, setResources] = useState<AuthorizationResource[]>([]);
   const [loading, setLoading] = useState(false);
   const [dialogVisible, setDialogVisible] = useState(false);
@@ -46,8 +46,8 @@ const ResourceManagementPage = () => {
   }, []);
 
   useEffect(() => {
-    void loadResources(application);
-  }, [application, loadResources]);
+    void loadResources(serviceResource);
+  }, [serviceResource, loadResources]);
 
   const resetForm = () => {
     setEditingID('');
@@ -100,7 +100,7 @@ const ResourceManagementPage = () => {
         notify('success', '资源已更新');
       } else {
         await createAuthorizationResource({
-          application,
+          service_resource: serviceResource,
           code,
           resource_type: form.resourceType,
           name,
@@ -112,7 +112,7 @@ const ResourceManagementPage = () => {
       }
       setDialogVisible(false);
       resetForm();
-      await loadResources(application);
+      await loadResources(serviceResource);
     } catch (error) {
       notify('error', getRequestErrorMessage(error, editingID ? '更新资源失败' : '创建资源失败'));
     } finally {
@@ -130,7 +130,7 @@ const ResourceManagementPage = () => {
       await deleteAuthorizationResource(target.id);
       setDeleteTarget(null);
       notify('success', '资源已删除');
-      await loadResources(application);
+      await loadResources(serviceResource);
     } catch (error) {
       notify('error', getRequestErrorMessage(error, '删除资源失败'));
     } finally {
@@ -145,14 +145,14 @@ const ResourceManagementPage = () => {
         description="注册 API 接口或业务实体资源，策略通过资源编码匹配，业务实例数据仍由业务服务维护。"
         actions={(
           <Space>
-            <Button variant="outline" loading={loading} type="button" onClick={() => void loadResources(application)}>刷新</Button>
+            <Button variant="outline" loading={loading} type="button" onClick={() => void loadResources(serviceResource)}>刷新</Button>
             <Button theme="primary" type="button" onClick={openCreateDialog}>新建资源</Button>
           </Space>
         )}
       />
 
       <div className="permission-toolbar">
-        <span className="permission-toolbar-meta">当前应用共 {resources.length} 个资源</span>
+        <span className="permission-toolbar-meta">当前服务资源共 {resources.length} 个资源</span>
       </div>
 
       <Card className="permission-card" bordered>
@@ -160,7 +160,7 @@ const ResourceManagementPage = () => {
           <table className="permission-table permission-pdp-table">
             <thead><tr><th>资源</th><th>类型</th><th>匹配器</th><th>描述</th><th>状态</th><th>更新时间</th><th>操作</th></tr></thead>
             <tbody>
-              {loading ? <LoadingRow colSpan={7} loading empty="当前应用暂无资源" /> : resources.length === 0 ? <LoadingRow colSpan={7} loading={false} empty="当前应用暂无资源" /> : resources.map((item) => (
+              {loading ? <LoadingRow colSpan={7} loading empty="当前服务资源暂无资源" /> : resources.length === 0 ? <LoadingRow colSpan={7} loading={false} empty="当前服务资源暂无资源" /> : resources.map((item) => (
                 <tr key={item.id}>
                   <td><div className="permission-table-name">{item.name || '-'}</div><div className="permission-table-code">{item.code || item.id}</div></td>
                   <td><Tag theme="primary" variant="light-outline">{resourceTypeLabel(item.resourceType)}</Tag></td>
@@ -192,7 +192,7 @@ const ResourceManagementPage = () => {
           <Form.FormItem label="资源类型">
             <Select value={form.resourceType} options={resourceTypeOptions} onChange={(value) => setForm((prev) => ({ ...prev, resourceType: String(value) as ResourceType }))} />
           </Form.FormItem>
-          <Form.FormItem label="资源编码" help="应用内稳定唯一，策略通过该编码匹配。">
+          <Form.FormItem label="资源编码" help="服务资源内稳定唯一，策略通过该编码匹配。">
             <Input value={form.code} disabled={Boolean(editingID)} maxlength={100} placeholder="例如 post" onChange={(value) => setForm((prev) => ({ ...prev, code: value }))} />
           </Form.FormItem>
           <Form.FormItem label="资源名称">

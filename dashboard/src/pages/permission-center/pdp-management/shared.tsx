@@ -52,7 +52,7 @@ export type PolicyForm = {
 };
 
 export type SubjectBindingDrawerProps = {
-  application: string;
+  serviceResource: string;
   policy: AuthorizationPolicy | null;
   visible: boolean;
   onClose: () => void;
@@ -157,7 +157,7 @@ export const LoadingRow = ({ colSpan, loading, empty }: { colSpan: number; loadi
   </tr>
 );
 
-export const SubjectBindingDrawer = ({ application, policy, visible, onClose }: SubjectBindingDrawerProps) => {
+export const SubjectBindingDrawer = ({ serviceResource, policy, visible, onClose }: SubjectBindingDrawerProps) => {
   const [bindingLoading, setBindingLoading] = useState(false);
   const [bindingSaving, setBindingSaving] = useState(false);
   const [bindingRows, setBindingRows] = useState<AuthorizationPolicyBinding[]>([]);
@@ -185,7 +185,7 @@ export const SubjectBindingDrawer = ({ application, policy, visible, onClose }: 
     try {
       const [nextBindings, nextRoles] = await Promise.all([
         getAuthorizationPolicyBindings(policy.id),
-        listRoles(application),
+        listRoles(serviceResource),
       ]);
       setBindingRows(nextBindings);
       setRoles(nextRoles);
@@ -257,7 +257,7 @@ export const SubjectBindingDrawer = ({ application, policy, visible, onClose }: 
       destroyOnClose
     >
       <Space direction="vertical" size={14} style={{ width: '100%' }}>
-        <div className="permission-form-help">角色绑定会随当前应用隔离；subject 绑定用于精确授权。保存会整体替换此策略的主体集合。</div>
+        <div className="permission-form-help">角色绑定会随当前服务资源隔离；subject 绑定用于精确授权。保存会整体替换此策略的主体集合。</div>
         <div className="permission-pdp-binding-add">
           <Select value={bindingType} options={subjectTypeOptions} onChange={(value) => setBindingType(String(value) as SubjectType)} />
           {bindingType === 'role' && roleOptions.length > 0 ? (

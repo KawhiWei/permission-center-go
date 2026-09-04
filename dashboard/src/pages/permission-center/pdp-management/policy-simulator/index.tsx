@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Button, Card, Form, Input, Select, Tag } from 'tdesign-react';
 
 import { decideAuthorization, type Decision, type ResourceType } from '../../../../api/pdp';
-import { getRequestErrorMessage, PageHeader, useApplicationScope } from '../../shared';
+import { getRequestErrorMessage, PageHeader, useServiceResourceScope } from '../../shared';
 import { methodOptions, notify, resourceTypeOptions } from '../shared';
 import '../../style.less';
 import '../style.less';
@@ -30,7 +30,7 @@ const EMPTY_FORM: SimulationForm = {
 };
 
 const PolicySimulatorPage = () => {
-  const { application } = useApplicationScope();
+  const { serviceResource } = useServiceResourceScope();
   const [form, setForm] = useState<SimulationForm>({ ...EMPTY_FORM });
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<Decision | null>(null);
@@ -52,7 +52,7 @@ const PolicySimulatorPage = () => {
     setResult(null);
     try {
       setResult(await decideAuthorization({
-        application,
+        service_resource: serviceResource,
         subject_id: subjectID,
         resource_code: resourceCode,
         resource_type: form.resourceType,
@@ -73,14 +73,14 @@ const PolicySimulatorPage = () => {
     <div className="permission-page permission-pdp-page">
       <PageHeader
         title="策略模拟"
-        description="使用当前应用和指定主体验证一次业务授权决策，模拟请求不会写入业务数据。"
+        description="使用当前服务资源和指定主体验证一次业务授权决策，模拟请求不会写入业务数据。"
       />
 
       <Card className="permission-card permission-pdp-simulator-card" bordered>
         <div className="permission-pdp-simulation">
           <div className="permission-pdp-simulation-copy">
             <strong>验证一个主体是否能执行指定动作</strong>
-            <span>PDP 会从当前应用读取主体角色；API 端点决策与实体实例决策可以分别模拟。</span>
+            <span>PDP 会从当前服务资源读取主体角色；API 端点决策与实体实例决策可以分别模拟。</span>
           </div>
           <Form labelAlign="top" className="permission-pdp-simulation-form">
             <Form.FormItem label="subject ID">

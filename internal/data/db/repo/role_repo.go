@@ -12,7 +12,7 @@ import (
 	"github.com/luck/permission-center-go/internal/biz"
 )
 
-const roleColumns = `id, application, code, name, description, enabled,
+const roleColumns = `id, service_resource, application, code, name, description, enabled,
 	created_by_id, created_by_name, created_at, updated_by_id, updated_by_name,
 	updated_at, is_deleted`
 
@@ -28,9 +28,10 @@ func NewRoleRepository(pool *pgxpool.Pool) *RoleRepository {
 }
 
 func (r *RoleRepository) Create(ctx context.Context, role *biz.Role) (*biz.Role, error) {
-	if role == nil || strings.TrimSpace(role.Application) == "" {
-		return nil, fmt.Errorf("%w: role and application are required", biz.ErrInvalidArgument)
+	if role == nil || strings.TrimSpace(bizScope(role.ServiceResource, role.Application)) == "" {
+		return nil, fmt.Errorf("%w: role and service_resource are required", biz.ErrInvalidArgument)
 	}
+	scope := bizScope(role.ServiceResource, role.Application)
 	storedID := strings.TrimSpace(role.ID)
 	if storedID == "" {
 		generatedID, err := newRoleID()
@@ -41,15 +42,15 @@ func (r *RoleRepository) Create(ctx context.Context, role *biz.Role) (*biz.Role,
 	}
 	const query = `
 		INSERT INTO roles (
-			id, application, code, name, description, enabled,
+			id, service_resource, application, code, name, description, enabled,
 			created_by_id, created_by_name, updated_by_id, updated_by_name, is_deleted
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $7, $8, FALSE)
+		VALUES ($1, $2, $2, $3, $4, $5, $6, $7, $8, $7, $8, FALSE)
 		RETURNING ` + roleColumns
 	actor := biz.AuditActorFromContext(ctx)
 	value, err := scanRole(r.pool.QueryRow(ctx, query,
 		storedID,
-		role.Application,
+		scope,
 		role.Code,
 		role.Name,
 		role.Description,
@@ -88,7 +89,7 @@ func (r *RoleRepository) Get(ctx context.Context, id string) (*biz.Role, error) 
 func (r *RoleRepository) ListByApplication(ctx context.Context, application string) ([]*biz.Role, error) {
 	const query = `SELECT ` + roleColumns + `
 		FROM roles
-		WHERE application = $1 AND is_deleted = FALSE AND enabled = TRUE
+		WHERE service_resource = $1 AND is_deleted = FALSE AND enabled = TRUE
 		ORDER BY name, id`
 	rows, err := r.pool.Query(ctx, query, application)
 	if err != nil {

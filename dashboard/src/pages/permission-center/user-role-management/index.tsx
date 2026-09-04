@@ -2,11 +2,11 @@ import { useCallback, useEffect, useState } from 'react';
 import { Button, Card, Checkbox, Input, MessagePlugin, Space, Tag } from 'tdesign-react';
 
 import { getUserRoleIDs, listRoles, replaceUserRoles, type Role } from '../../../api/permission';
-import { getRequestErrorMessage, PageHeader, useApplicationScope } from '../shared';
+import { getRequestErrorMessage, PageHeader, useServiceResourceScope } from '../shared';
 import '../style.less';
 
 const UserRoleManagementPage = () => {
-  const { application } = useApplicationScope();
+  const { serviceResource } = useServiceResourceScope();
   const [userID, setUserID] = useState('');
   const [loadedUserID, setLoadedUserID] = useState('');
   const [roles, setRoles] = useState<Role[]>([]);
@@ -26,15 +26,15 @@ const UserRoleManagementPage = () => {
   useEffect(() => {
     setLoadedUserID('');
     setSelectedRoleIDs([]);
-    void loadRoles(application);
-  }, [application, loadRoles]);
+    void loadRoles(serviceResource);
+  }, [serviceResource, loadRoles]);
 
   const loadUserRoles = async (subject: string) => {
     setLoading(true);
     try {
       const [nextRoles, assignedRoleIDs] = await Promise.all([
-        listRoles(application),
-        getUserRoleIDs(subject, application),
+        listRoles(serviceResource),
+        getUserRoleIDs(subject, serviceResource),
       ]);
       setRoles(nextRoles);
       setSelectedRoleIDs(assignedRoleIDs);
@@ -66,10 +66,10 @@ const UserRoleManagementPage = () => {
 
     setSaving(true);
     try {
-      await replaceUserRoles(loadedUserID, application, selectedRoleIDs);
+      await replaceUserRoles(loadedUserID, serviceResource, selectedRoleIDs);
       const [nextRoles, assignedRoleIDs] = await Promise.all([
-        listRoles(application),
-        getUserRoleIDs(loadedUserID, application),
+        listRoles(serviceResource),
+        getUserRoleIDs(loadedUserID, serviceResource),
       ]);
       setRoles(nextRoles);
       setSelectedRoleIDs(assignedRoleIDs);
@@ -88,7 +88,7 @@ const UserRoleManagementPage = () => {
     <div className="permission-page permission-user-role-page">
       <PageHeader
         title="用户角色绑定"
-        description="使用统一登录用户的 subject，维护其在当前应用内的角色集合"
+        description="使用统一登录用户的 subject，维护其在当前服务资源内的角色集合"
         actions={loadedUserID ? <Tag theme="success" variant="light-outline">已加载用户</Tag> : null}
       />
 
@@ -113,7 +113,7 @@ const UserRoleManagementPage = () => {
         </div>
         {loadedUserID ? (
           roles.length === 0 ? (
-            <div className="permission-empty">当前应用暂无可用角色，请先创建角色。</div>
+            <div className="permission-empty">当前服务资源暂无可用角色，请先创建角色。</div>
           ) : (
             <>
               <Checkbox.Group
@@ -143,7 +143,7 @@ const UserRoleManagementPage = () => {
             </>
           )
         ) : (
-          <div className="permission-empty">输入用户 subject 后查询当前应用的角色绑定。</div>
+          <div className="permission-empty">输入用户 subject 后查询当前服务资源的角色绑定。</div>
         )}
       </Card>
     </div>

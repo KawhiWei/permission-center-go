@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Button, Card, MessagePlugin, Space, Tag } from 'tdesign-react';
 
 import { getMenuTree, listRoles, type Menu, type Role } from '../../../api/permission';
-import { getRequestErrorMessage, PageHeader, useApplicationScope } from '../shared';
+import { getRequestErrorMessage, PageHeader, useServiceResourceScope } from '../shared';
 import '../style.less';
 
 type MenuCounts = {
@@ -24,7 +24,7 @@ const countMenuTree = (nodes: Menu[]): MenuCounts => {
 };
 
 const DashboardPage = () => {
-  const { application } = useApplicationScope();
+  const { serviceResource } = useServiceResourceScope();
   const [roles, setRoles] = useState<Role[]>([]);
   const [menuCounts, setMenuCounts] = useState<MenuCounts>({ menus: 0, buttons: 0 });
   const [loading, setLoading] = useState(false);
@@ -48,8 +48,8 @@ const DashboardPage = () => {
   }, []);
 
   useEffect(() => {
-    void loadSummary(application);
-  }, [application, loadSummary]);
+    void loadSummary(serviceResource);
+  }, [serviceResource, loadSummary]);
 
   const enabledRoleCount = roles.filter((role) => role.enabled).length;
   const totalPermissionCount = menuCounts.menus + menuCounts.buttons;
@@ -58,19 +58,19 @@ const DashboardPage = () => {
     <div className="permission-page permission-dashboard-page">
       <PageHeader
         title="仪表盘"
-        description="查看当前应用的角色、菜单和按钮权限规模"
+        description="查看当前服务资源的角色、菜单和按钮权限规模"
         actions={<Tag theme="primary" variant="light-outline">RBAC</Tag>}
       />
 
       <div className="permission-toolbar">
-        <span className="permission-toolbar-meta">当前应用：{application}</span>
+        <span className="permission-toolbar-meta">当前服务资源：{serviceResource}</span>
       </div>
 
       <div className="permission-metric-grid">
         <div className="permission-metric">
-          <span className="permission-metric-label">应用标识</span>
-          <strong className="permission-metric-value" title={application}>{application}</strong>
-          <span className="permission-metric-hint">权限数据按应用隔离</span>
+          <span className="permission-metric-label">服务资源标识</span>
+          <strong className="permission-metric-value" title={serviceResource}>{serviceResource}</strong>
+          <span className="permission-metric-hint">权限数据按服务资源隔离</span>
         </div>
         <div className="permission-metric">
           <span className="permission-metric-label">启用角色</span>
@@ -113,7 +113,7 @@ const DashboardPage = () => {
       <Card className="permission-card" bordered>
         <div className="permission-card-title">
           <strong>操作流程</strong>
-          <span>按以下顺序完成应用授权</span>
+          <span>按以下顺序完成服务资源授权</span>
         </div>
         <div className="permission-dashboard-steps">
           <div className="permission-dashboard-step">
@@ -148,7 +148,7 @@ const DashboardPage = () => {
         <Space className="permission-dashboard-note">
           <Tag theme="warning" variant="light">提示</Tag>
           <span>统一登录只负责身份认证，角色和权限数据由本权限中心维护。</span>
-          <Button variant="text" theme="primary" type="button" onClick={() => void loadSummary(application)}>刷新摘要</Button>
+          <Button variant="text" theme="primary" type="button" onClick={() => void loadSummary(serviceResource)}>刷新摘要</Button>
         </Space>
       </Card>
     </div>

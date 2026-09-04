@@ -4,7 +4,6 @@ import ErrorPage from '../components/error';
 import PublicLayout from '../layouts/layout';
 import Login from '../pages/login';
 import Dashboard from '../pages/permission-center/dashboard';
-import ApplicationManagement from '../pages/permission-center/application-management';
 import RoleManagement from '../pages/permission-center/role-management';
 import MenuManagement from '../pages/permission-center/menu-management';
 import UserRoleManagement from '../pages/permission-center/user-role-management';
@@ -13,14 +12,14 @@ import ActionManagement from '../pages/permission-center/pdp-management/action-m
 import APIEndpointManagement from '../pages/permission-center/pdp-management/api-endpoint-management';
 import PolicyManagement from '../pages/permission-center/pdp-management/policy-management';
 import PolicySimulator from '../pages/permission-center/pdp-management/policy-simulator';
-import SelectApplication from '../pages/select-application';
+import SelectServiceResource from '../pages/select-service-resource';
 import {
   consumeLoginRedirect,
-  getApplicationSelectionPath,
+  getServiceResourceSelectionPath,
   getSafeRedirectPath,
   HomeRedirect,
   RedirectIfAuthenticated,
-  RequireApplication,
+  RequireServiceResource,
   RequireAuth,
   setCachedAuthStatus,
 } from './auth';
@@ -30,7 +29,7 @@ const AuthCallback = () => {
   const queryRedirect = getSafeRedirectPath(new URLSearchParams(location.search).get('redirect'));
   const redirect = queryRedirect || consumeLoginRedirect();
   setCachedAuthStatus(true);
-  return <Navigate to={getApplicationSelectionPath(redirect)} replace />;
+  return <Navigate to={getServiceResourceSelectionPath(redirect)} replace />;
 };
 
 export const routes: RouteObject[] = [
@@ -55,23 +54,18 @@ export const routes: RouteObject[] = [
     element: <RequireAuth />,
     children: [
       {
-        path: '/select-application',
-        Component: SelectApplication,
-        handle: { name: '选择应用' },
+        path: '/select-service-resource',
+        Component: SelectServiceResource,
+        handle: { name: '选择服务资源' },
       },
       {
-        element: <RequireApplication />,
+        element: <RequireServiceResource />,
         children: [
           {
             id: 'protected-layout',
             path: '/',
             Component: PublicLayout,
             children: [
-              {
-                path: 'applications',
-                Component: ApplicationManagement,
-                handle: { name: '应用管理' },
-              },
               {
                 path: 'dashboard',
                 Component: Dashboard,

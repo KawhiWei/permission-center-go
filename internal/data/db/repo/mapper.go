@@ -25,7 +25,14 @@ func toBizRole(value *model.Role) *biz.Role {
 		Description: value.Description,
 		Enabled:     value.Enabled,
 	}
+	result.ServiceResource = value.ServiceResource
 	result.Application = value.Application
+	if result.ServiceResource == "" {
+		result.ServiceResource = result.Application
+	}
+	if result.Application == "" {
+		result.Application = result.ServiceResource
+	}
 	return result
 }
 
@@ -57,6 +64,13 @@ func toBizMenu(value *model.Menu) *biz.Menu {
 		Sort:        value.Sort,
 		Enabled:     value.Enabled,
 	}
+	result.ServiceResource = value.ServiceResource
 	result.Application = value.Application
+	if result.ServiceResource == "" {
+		result.ServiceResource = result.Application
+	}
+	if result.Application == "" {
+		result.Application = result.ServiceResource
+	}
 	return result
 }

@@ -3,9 +3,9 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { Button, Input, Space, Tooltip } from 'tdesign-react';
 import { FullscreenExitIcon, FullscreenIcon, MoonIcon, SearchIcon, SunnyIcon } from 'tdesign-icons-react';
 import {
-  APPLICATION_CHANGE_EVENT,
-  APPLICATION_STORAGE_KEY,
-  getStoredApplication,
+  SERVICE_RESOURCE_CHANGE_EVENT,
+  SERVICE_RESOURCE_STORAGE_KEY,
+  getStoredServiceResource,
 } from '../../../api/permission';
 
 interface PublicHeaderProps {
@@ -16,23 +16,23 @@ interface PublicHeaderProps {
 const PublicHeader = ({ theme, onChangeTheme }: PublicHeaderProps) => {
     const location = useLocation();
     const navigate = useNavigate();
-    const [application, setApplication] = useState(getStoredApplication);
+    const [serviceResource, setServiceResource] = useState(getStoredServiceResource);
     const [isFullscreen, setIsFullscreen] = useState(Boolean(document.fullscreenElement));
 
     useEffect(() => {
-        const syncApplication = () => {
-            setApplication(getStoredApplication());
+        const syncServiceResource = () => {
+            setServiceResource(getStoredServiceResource());
         };
         const handleStorage = (event: StorageEvent) => {
-            if (event.key === APPLICATION_STORAGE_KEY) {
-                syncApplication();
+            if (event.key === SERVICE_RESOURCE_STORAGE_KEY) {
+                syncServiceResource();
             }
         };
 
-        window.addEventListener(APPLICATION_CHANGE_EVENT, syncApplication);
+        window.addEventListener(SERVICE_RESOURCE_CHANGE_EVENT, syncServiceResource);
         window.addEventListener('storage', handleStorage);
         return () => {
-            window.removeEventListener(APPLICATION_CHANGE_EVENT, syncApplication);
+            window.removeEventListener(SERVICE_RESOURCE_CHANGE_EVENT, syncServiceResource);
             window.removeEventListener('storage', handleStorage);
         };
     }, []);
@@ -56,30 +56,30 @@ const PublicHeader = ({ theme, onChangeTheme }: PublicHeaderProps) => {
         await document.documentElement.requestFullscreen();
     };
 
-    const handleSwitchApplication = () => {
+    const handleSwitchServiceResource = () => {
         const redirect = `${location.pathname}${location.search}${location.hash}`;
-        navigate(`/select-application?redirect=${encodeURIComponent(redirect)}`);
+        navigate(`/select-service-resource?redirect=${encodeURIComponent(redirect)}`);
     };
 
     return (
         <div className="layout-header-edit" >
             <Space size="medium">
                 <div
-                  className="layout-current-application"
-                  title={application ? `当前应用：${application}` : '当前未选择应用'}
+                  className="layout-current-service-resource"
+                  title={serviceResource ? `当前服务资源：${serviceResource}` : '当前未选择服务资源'}
                 >
-                  <span className="layout-current-application-label">应用</span>
-                  <strong className="layout-current-application-value">
-                    {application || '未选择'}
+                  <span className="layout-current-service-resource-label">服务资源</span>
+                  <strong className="layout-current-service-resource-value">
+                    {serviceResource || '未选择'}
                   </strong>
                 </div>
                 <Button
-                  className="layout-application-switch"
+                  className="layout-service-resource-switch"
                   variant="text"
                   size="small"
-                  onClick={handleSwitchApplication}
+                  onClick={handleSwitchServiceResource}
                 >
-                  切换应用
+                  切换服务资源
                 </Button>
                 <Input
                   style={{

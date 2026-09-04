@@ -1,24 +1,29 @@
 import { expect, test, type Page, type Route } from '@playwright/test';
 
-const APPLICATION_STORAGE_KEY = 'permission-center-application';
-const FIRST_APPLICATION = {
-  application: 'content-platform',
-  name: '内容平台',
-  description: '端到端测试应用一',
-  enabled: true,
-  is_deleted: false,
+const SERVICE_RESOURCE_STORAGE_KEY = 'permission-center-service-resource';
+const LAYOUT_TABS_STORAGE_KEY = 'permission-center-layout-tabs';
+const FIRST_SERVICE_RESOURCE = {
+  id: 'service-resource-content',
+  name: 'content-platform',
+  display_name: '内容平台',
+  audience: 'permission.center.api',
+  description: '端到端测试服务资源一',
+  is_active: true,
+  created_at: '2026-01-01T00:00:00Z',
 };
-const SECOND_APPLICATION = {
-  application: 'analytics-platform',
-  name: '数据平台',
-  description: '端到端测试应用二',
-  enabled: true,
-  is_deleted: false,
+const SECOND_SERVICE_RESOURCE = {
+  id: 'service-resource-analytics',
+  name: 'analytics-platform',
+  display_name: '数据平台',
+  audience: 'permission.center.analytics',
+  description: '端到端测试服务资源二',
+  is_active: true,
+  created_at: '2026-01-02T00:00:00Z',
 };
 
 type RoleRecord = {
   id: string;
-  application: string;
+  service_resource: string;
   code: string;
   name: string;
   description: string;
@@ -27,7 +32,7 @@ type RoleRecord = {
 
 type ResourceRecord = {
   id: string;
-  application: string;
+  service_resource: string;
   code: string;
   resource_type: string;
   name: string;
@@ -38,7 +43,7 @@ type ResourceRecord = {
 
 type ActionRecord = {
   id: string;
-  application: string;
+  service_resource: string;
   code: string;
   name: string;
   description: string;
@@ -47,7 +52,7 @@ type ActionRecord = {
 
 type PolicyRecord = {
   id: string;
-  application: string;
+  service_resource: string;
   code: string;
   name: string;
   description: string;
@@ -59,28 +64,30 @@ type PolicyRecord = {
 };
 
 type PermissionMockState = {
-  rolesByApplication: Record<string, RoleRecord[]>;
+  authenticated: boolean;
+  rolesByServiceResource: Record<string, RoleRecord[]>;
   userRoleIDs: string[];
   roleRequests: string[];
   userRoleRequests: string[];
   userRoleReads: number;
-  resourcesByApplication: Record<string, ResourceRecord[]>;
-  actionsByApplication: Record<string, ActionRecord[]>;
-  endpointsByApplication: Record<string, Record<string, unknown>[]>;
-  policiesByApplication: Record<string, PolicyRecord[]>;
+  serviceResourceRequests: number;
+  resourcesByServiceResource: Record<string, ResourceRecord[]>;
+  actionsByServiceResource: Record<string, ActionRecord[]>;
+  endpointsByServiceResource: Record<string, Record<string, unknown>[]>;
+  policiesByServiceResource: Record<string, PolicyRecord[]>;
   bindingsByPolicy: Record<string, Record<string, unknown>[]>;
   decisionRequests: Record<string, unknown>[];
 };
 
 const makeRole = (
-  application: string,
+  serviceResource: string,
   id: string,
   code: string,
   name: string,
   description = '',
 ): RoleRecord => ({
   id,
-  application,
+  service_resource: serviceResource,
   code,
   name,
   description,
@@ -88,14 +95,14 @@ const makeRole = (
 });
 
 const makeResource = (
-  application: string,
+  serviceResource: string,
   id: string,
   code: string,
   name: string,
   resourceType = 'entity',
 ): ResourceRecord => ({
   id,
-  application,
+  service_resource: serviceResource,
   code,
   resource_type: resourceType,
   name,
@@ -105,13 +112,13 @@ const makeResource = (
 });
 
 const makeAction = (
-  application: string,
+  serviceResource: string,
   id: string,
   code: string,
   name: string,
 ): ActionRecord => ({
   id,
-  application,
+  service_resource: serviceResource,
   code,
   name,
   description: '',
@@ -133,58 +140,75 @@ const fulfillJSON = async (route: Route, body: unknown, status = 200) => {
   });
 };
 
-const getApplicationRecords = () => [FIRST_APPLICATION, SECOND_APPLICATION];
+const getServiceResourceRecords = () => [FIRST_SERVICE_RESOURCE, SECOND_SERVICE_RESOURCE];
 
 const installAPIMocks = async (page: Page): Promise<PermissionMockState> => {
   const state: PermissionMockState = {
-    rolesByApplication: {
-      [FIRST_APPLICATION.application]: [
-        makeRole(FIRST_APPLICATION.application, 'role-editor', 'content-editor', '内容编辑'),
+    authenticated: true,
+    rolesByServiceResource: {
+      [FIRST_SERVICE_RESOURCE.name]: [
+        makeRole(FIRST_SERVICE_RESOURCE.name, 'role-editor', 'content-editor', '内容编辑'),
       ],
-      [SECOND_APPLICATION.application]: [
-        makeRole(SECOND_APPLICATION.application, 'role-analyst', 'data-analyst', '数据分析'),
+      [SECOND_SERVICE_RESOURCE.name]: [
+        makeRole(SECOND_SERVICE_RESOURCE.name, 'role-analyst', 'data-analyst', '数据分析'),
       ],
     },
     userRoleIDs: [],
     roleRequests: [],
     userRoleRequests: [],
     userRoleReads: 0,
-    resourcesByApplication: {
-      [FIRST_APPLICATION.application]: [
-        makeResource(FIRST_APPLICATION.application, 'resource-post', 'post', '帖子'),
+    serviceResourceRequests: 0,
+    resourcesByServiceResource: {
+      [FIRST_SERVICE_RESOURCE.name]: [
+        makeResource(FIRST_SERVICE_RESOURCE.name, 'resource-post', 'post', '帖子'),
       ],
-      [SECOND_APPLICATION.application]: [],
+      [SECOND_SERVICE_RESOURCE.name]: [],
     },
-    actionsByApplication: {
-      [FIRST_APPLICATION.application]: [
-        makeAction(FIRST_APPLICATION.application, 'action-update', 'update', '编辑'),
+    actionsByServiceResource: {
+      [FIRST_SERVICE_RESOURCE.name]: [
+        makeAction(FIRST_SERVICE_RESOURCE.name, 'action-update', 'update', '编辑'),
       ],
-      [SECOND_APPLICATION.application]: [],
+      [SECOND_SERVICE_RESOURCE.name]: [],
     },
-    endpointsByApplication: {
-      [FIRST_APPLICATION.application]: [],
-      [SECOND_APPLICATION.application]: [],
+    endpointsByServiceResource: {
+      [FIRST_SERVICE_RESOURCE.name]: [],
+      [SECOND_SERVICE_RESOURCE.name]: [],
     },
-    policiesByApplication: {
-      [FIRST_APPLICATION.application]: [],
-      [SECOND_APPLICATION.application]: [],
+    policiesByServiceResource: {
+      [FIRST_SERVICE_RESOURCE.name]: [],
+      [SECOND_SERVICE_RESOURCE.name]: [],
     },
     bindingsByPolicy: {},
     decisionRequests: [],
   };
 
   await page.route('**/api/auth/me', async (route) => {
+    if (!state.authenticated) {
+      await fulfillJSON(route, {
+        success: false,
+        errorCode: 'UNAUTHENTICATED',
+        errorMessage: '未登录',
+        result: null,
+      }, 401);
+      return;
+    }
     await fulfillJSON(route, jsonResult({
       isAuthenticated: true,
       user: { sub: 'e2e-user', name: 'Playwright 用户', email: 'e2e@example.test' },
     }));
   });
 
-  await page.route('**/api/v1/applications**', async (route) => {
+  await page.route('**/api/auth/logout', async (route) => {
+    state.authenticated = false;
+    await fulfillJSON(route, jsonResult({ logoutUrl: '' }));
+  });
+
+  await page.route('**/api/v1/service-resources**', async (route) => {
     const request = route.request();
     const url = new URL(request.url());
-    if (request.method() === 'GET' && url.pathname === '/api/v1/applications') {
-      await fulfillJSON(route, jsonResult({ items: getApplicationRecords() }));
+    if (request.method() === 'GET' && url.pathname === '/api/v1/service-resources') {
+      state.serviceResourceRequests += 1;
+      await fulfillJSON(route, jsonResult({ items: getServiceResourceRecords() }));
       return;
     }
 
@@ -194,30 +218,30 @@ const installAPIMocks = async (page: Page): Promise<PermissionMockState> => {
   await page.route('**/api/v1/roles**', async (route) => {
     const request = route.request();
     const url = new URL(request.url());
-    const application = url.searchParams.get('application') || '';
+    const serviceResource = url.searchParams.get('service_resource') || '';
 
     if (request.method() === 'GET' && url.pathname === '/api/v1/roles') {
-      state.roleRequests.push(application);
-      await fulfillJSON(route, jsonResult({ items: state.rolesByApplication[application] || [] }));
+      state.roleRequests.push(serviceResource);
+      await fulfillJSON(route, jsonResult({ items: state.rolesByServiceResource[serviceResource] || [] }));
       return;
     }
 
     if (request.method() === 'POST' && url.pathname === '/api/v1/roles') {
       const payload = request.postDataJSON() as {
-        application?: string;
+        service_resource?: string;
         code?: string;
         name?: string;
         description?: string;
       };
-      const applicationRoles = state.rolesByApplication[payload.application || ''] || [];
+      const serviceResourceRoles = state.rolesByServiceResource[payload.service_resource || ''] || [];
       const role = makeRole(
-        payload.application || '',
-        `role-${applicationRoles.length + 1}`,
+        payload.service_resource || '',
+        `role-${serviceResourceRoles.length + 1}`,
         payload.code || '',
         payload.name || '',
         payload.description || '',
       );
-      state.rolesByApplication[role.application] = [...applicationRoles, role];
+      state.rolesByServiceResource[role.service_resource] = [...serviceResourceRoles, role];
       await fulfillJSON(route, jsonResult(role));
       return;
     }
@@ -257,7 +281,7 @@ const installAPIMocks = async (page: Page): Promise<PermissionMockState> => {
     const request = route.request();
     const url = new URL(request.url());
     const path = url.pathname;
-    const application = url.searchParams.get('application') || FIRST_APPLICATION.application;
+    const serviceResource = url.searchParams.get('service_resource') || FIRST_SERVICE_RESOURCE.name;
     const collectionMatch = path.match(/^\/api\/v1\/authorization\/(resources|actions|api-endpoints|policies)$/);
     const itemMatch = path.match(/^\/api\/v1\/authorization\/(resources|actions|api-endpoints|policies)\/([^/]+)$/);
     const bindingMatch = path.match(/^\/api\/v1\/authorization\/policies\/([^/]+)\/bindings$/);
@@ -265,12 +289,12 @@ const installAPIMocks = async (page: Page): Promise<PermissionMockState> => {
     if (collectionMatch && request.method() === 'GET') {
       const collection = collectionMatch[1];
       const items = collection === 'resources'
-        ? state.resourcesByApplication[application] || []
+        ? state.resourcesByServiceResource[serviceResource] || []
         : collection === 'actions'
-          ? state.actionsByApplication[application] || []
+          ? state.actionsByServiceResource[serviceResource] || []
           : collection === 'api-endpoints'
-            ? state.endpointsByApplication[application] || []
-            : state.policiesByApplication[application] || [];
+            ? state.endpointsByServiceResource[serviceResource] || []
+            : state.policiesByServiceResource[serviceResource] || [];
       await fulfillJSON(route, jsonResult({ items }));
       return;
     }
@@ -282,7 +306,7 @@ const installAPIMocks = async (page: Page): Promise<PermissionMockState> => {
       if (collection === 'resources') {
         const resource: ResourceRecord = {
           id,
-          application: String(payload.application || application),
+          service_resource: String(payload.service_resource || serviceResource),
           code: String(payload.code || ''),
           resource_type: String(payload.resource_type || 'entity'),
           name: String(payload.name || ''),
@@ -290,32 +314,32 @@ const installAPIMocks = async (page: Page): Promise<PermissionMockState> => {
           matcher: String(payload.matcher || ''),
           enabled: payload.enabled !== false,
         };
-        state.resourcesByApplication[resource.application] = [...(state.resourcesByApplication[resource.application] || []), resource];
+        state.resourcesByServiceResource[resource.service_resource] = [...(state.resourcesByServiceResource[resource.service_resource] || []), resource];
         await fulfillJSON(route, jsonResult(resource), 201);
         return;
       }
       if (collection === 'actions') {
         const action: ActionRecord = {
           id,
-          application: String(payload.application || application),
+          service_resource: String(payload.service_resource || serviceResource),
           code: String(payload.code || ''),
           name: String(payload.name || ''),
           description: String(payload.description || ''),
           enabled: payload.enabled !== false,
         };
-        state.actionsByApplication[action.application] = [...(state.actionsByApplication[action.application] || []), action];
+        state.actionsByServiceResource[action.service_resource] = [...(state.actionsByServiceResource[action.service_resource] || []), action];
         await fulfillJSON(route, jsonResult(action), 201);
         return;
       }
       if (collection === 'api-endpoints') {
-        const endpoint = { id, application: String(payload.application || application), ...payload };
-        state.endpointsByApplication[String(endpoint.application)] = [...(state.endpointsByApplication[String(endpoint.application)] || []), endpoint];
+        const endpoint = { id, service_resource: String(payload.service_resource || serviceResource), ...payload };
+        state.endpointsByServiceResource[String(endpoint.service_resource)] = [...(state.endpointsByServiceResource[String(endpoint.service_resource)] || []), endpoint];
         await fulfillJSON(route, jsonResult(endpoint), 201);
         return;
       }
       const policy: PolicyRecord = {
         id,
-        application: String(payload.application || application),
+        service_resource: String(payload.service_resource || serviceResource),
         code: String(payload.code || ''),
         name: String(payload.name || ''),
         description: String(payload.description || ''),
@@ -325,7 +349,7 @@ const installAPIMocks = async (page: Page): Promise<PermissionMockState> => {
         action_codes: Array.isArray(payload.action_codes) ? payload.action_codes.filter((value): value is string => typeof value === 'string') : [],
         enabled: payload.enabled !== false,
       };
-      state.policiesByApplication[policy.application] = [...(state.policiesByApplication[policy.application] || []), policy];
+      state.policiesByServiceResource[policy.service_resource] = [...(state.policiesByServiceResource[policy.service_resource] || []), policy];
       await fulfillJSON(route, jsonResult(policy), 201);
       return;
     }
@@ -335,17 +359,17 @@ const installAPIMocks = async (page: Page): Promise<PermissionMockState> => {
       const id = itemMatch[2];
       const payload = request.postDataJSON() as Record<string, unknown>;
       const collectionState = collection === 'resources'
-        ? state.resourcesByApplication[application] || []
+        ? state.resourcesByServiceResource[serviceResource] || []
         : collection === 'actions'
-          ? state.actionsByApplication[application] || []
+          ? state.actionsByServiceResource[serviceResource] || []
           : collection === 'api-endpoints'
-            ? state.endpointsByApplication[application] || []
-            : state.policiesByApplication[application] || [];
+            ? state.endpointsByServiceResource[serviceResource] || []
+            : state.policiesByServiceResource[serviceResource] || [];
       const nextItems = collectionState.map((item) => item.id === id ? { ...item, ...payload } : item);
-      if (collection === 'resources') state.resourcesByApplication[application] = nextItems as ResourceRecord[];
-      if (collection === 'actions') state.actionsByApplication[application] = nextItems as ActionRecord[];
-      if (collection === 'api-endpoints') state.endpointsByApplication[application] = nextItems;
-      if (collection === 'policies') state.policiesByApplication[application] = nextItems as PolicyRecord[];
+      if (collection === 'resources') state.resourcesByServiceResource[serviceResource] = nextItems as ResourceRecord[];
+      if (collection === 'actions') state.actionsByServiceResource[serviceResource] = nextItems as ActionRecord[];
+      if (collection === 'api-endpoints') state.endpointsByServiceResource[serviceResource] = nextItems;
+      if (collection === 'policies') state.policiesByServiceResource[serviceResource] = nextItems as PolicyRecord[];
       await fulfillJSON(route, jsonResult(nextItems.find((item) => item.id === id) || null));
       return;
     }
@@ -353,10 +377,10 @@ const installAPIMocks = async (page: Page): Promise<PermissionMockState> => {
     if (itemMatch && request.method() === 'DELETE') {
       const collection = itemMatch[1];
       const id = itemMatch[2];
-      if (collection === 'resources') state.resourcesByApplication[application] = (state.resourcesByApplication[application] || []).filter((item) => item.id !== id);
-      if (collection === 'actions') state.actionsByApplication[application] = (state.actionsByApplication[application] || []).filter((item) => item.id !== id);
-      if (collection === 'api-endpoints') state.endpointsByApplication[application] = (state.endpointsByApplication[application] || []).filter((item) => item.id !== id);
-      if (collection === 'policies') state.policiesByApplication[application] = (state.policiesByApplication[application] || []).filter((item) => item.id !== id);
+      if (collection === 'resources') state.resourcesByServiceResource[serviceResource] = (state.resourcesByServiceResource[serviceResource] || []).filter((item) => item.id !== id);
+      if (collection === 'actions') state.actionsByServiceResource[serviceResource] = (state.actionsByServiceResource[serviceResource] || []).filter((item) => item.id !== id);
+      if (collection === 'api-endpoints') state.endpointsByServiceResource[serviceResource] = (state.endpointsByServiceResource[serviceResource] || []).filter((item) => item.id !== id);
+      if (collection === 'policies') state.policiesByServiceResource[serviceResource] = (state.policiesByServiceResource[serviceResource] || []).filter((item) => item.id !== id);
       await fulfillJSON(route, jsonResult(null));
       return;
     }
@@ -402,58 +426,99 @@ const installAPIMocks = async (page: Page): Promise<PermissionMockState> => {
   return state;
 };
 
-const seedApplication = async (page: Page, application = FIRST_APPLICATION.application) => {
+const seedServiceResource = async (page: Page, serviceResource = FIRST_SERVICE_RESOURCE.name) => {
   await page.addInitScript(({ key, value }) => {
     window.localStorage.setItem(key, value);
-  }, { key: APPLICATION_STORAGE_KEY, value: application });
+  }, { key: SERVICE_RESOURCE_STORAGE_KEY, value: serviceResource });
 };
 
 test.describe('权限中心关键操作流程', () => {
-  test('未选择应用时直接访问角色管理会重定向到应用选择页', async ({ page }) => {
+  test('未选择服务资源时直接访问角色管理会重定向到服务资源选择页', async ({ page }) => {
     await installAPIMocks(page);
     await page.goto('/roles');
 
-    await expect(page).toHaveURL(/\/select-application\?redirect=%2Froles$/);
-    await expect(page.getByRole('heading', { name: '选择应用' })).toBeVisible();
-    await expect(page.getByText('可用应用', { exact: true })).toBeVisible();
+    await expect(page).toHaveURL(/\/select-service-resource\?redirect=%2Froles$/);
+    await expect(page.getByRole('heading', { name: '选择服务资源' })).toBeVisible();
+    await expect(page.getByText('可用服务资源', { exact: true })).toBeVisible();
   });
 
-  test('选择的应用会在刷新后保留，并显示在 Header 中', async ({ page }) => {
+  test('选择的服务资源会在刷新后保留，并显示在 Header 中', async ({ page }) => {
     await installAPIMocks(page);
-    await seedApplication(page);
+    await seedServiceResource(page);
     await page.goto('/dashboard');
 
-    const currentApplication = page.locator('.layout-current-application-value');
-    await expect(currentApplication).toHaveText(FIRST_APPLICATION.application);
+    const currentServiceResource = page.locator('.layout-current-service-resource-value');
+    await expect(currentServiceResource).toHaveText(FIRST_SERVICE_RESOURCE.name);
 
     await page.reload();
 
     await expect(page).toHaveURL(/\/dashboard$/);
-    await expect(currentApplication).toHaveText(FIRST_APPLICATION.application);
+    await expect(currentServiceResource).toHaveText(FIRST_SERVICE_RESOURCE.name);
   });
 
-  test('Header 切换应用后返回原页面，并按新应用刷新角色列表', async ({ page }) => {
+  test('服务资源选择页可以刷新列表并保持只读目录', async ({ page }) => {
     const state = await installAPIMocks(page);
-    await seedApplication(page);
+    await page.goto('/select-service-resource');
+
+    await expect(page.getByRole('heading', { name: '选择服务资源' })).toBeVisible();
+    await expect(page.getByText(FIRST_SERVICE_RESOURCE.display_name, { exact: true })).toBeVisible();
+    await page.getByRole('button', { name: '刷新列表', exact: true }).click();
+    await expect.poll(() => state.serviceResourceRequests).toBeGreaterThan(1);
+    await expect(page.getByRole('button', { name: '新建服务资源', exact: true })).toHaveCount(0);
+  });
+
+  test('退出登录会清空历史页签，重新登录后只保留仪表盘', async ({ page }) => {
+    const state = await installAPIMocks(page);
+    await seedServiceResource(page);
+    await page.goto('/roles');
+    await page.goto('/authorization/resources');
+
+    await expect.poll(async () => page.evaluate((key) => {
+      const tabs = JSON.parse(window.localStorage.getItem(key) || '[]') as unknown[];
+      return tabs.length;
+    }, LAYOUT_TABS_STORAGE_KEY)).toBeGreaterThan(1);
+
+    await page.locator('.layout-avatar-trigger').click();
+    await page.getByText('退出登录', { exact: true }).click();
+    await expect(page).toHaveURL(/\/login/);
+    await expect.poll(() => page.evaluate(
+      (key) => window.localStorage.getItem(key),
+      LAYOUT_TABS_STORAGE_KEY,
+    )).toBeNull();
+
+    state.authenticated = true;
+    await page.goto('/dashboard');
+    const layoutTabs = page.locator('.layout-content-tabs .t-tabs__nav-item');
+    await expect(layoutTabs).toHaveCount(1);
+    await expect(layoutTabs.first()).toContainText('仪表盘');
+    await expect(page.evaluate(
+      (key) => JSON.parse(window.localStorage.getItem(key) || '[]'),
+      LAYOUT_TABS_STORAGE_KEY,
+    )).resolves.toEqual([{ value: '/dashboard', label: '仪表盘', removable: false }]);
+  });
+
+  test('Header 切换服务资源后返回原页面，并按新服务资源刷新角色列表', async ({ page }) => {
+    const state = await installAPIMocks(page);
+    await seedServiceResource(page);
     await page.goto('/roles');
 
     await expect(page.getByText('内容编辑', { exact: true })).toBeVisible();
-    await page.getByRole('button', { name: '切换应用', exact: true }).click();
-    await expect(page).toHaveURL(/\/select-application\?redirect=%2Froles$/);
+    await page.getByRole('button', { name: '切换服务资源', exact: true }).click();
+    await expect(page).toHaveURL(/\/select-service-resource\?redirect=%2Froles$/);
 
-    await page.locator('.permission-application-option').filter({ hasText: SECOND_APPLICATION.name }).click();
+    await page.locator('.permission-service-resource-option').filter({ hasText: SECOND_SERVICE_RESOURCE.display_name }).click();
     await page.getByRole('button', { name: '进入权限中心', exact: true }).click();
 
     await expect(page).toHaveURL(/\/roles$/);
-    await expect(page.locator('.layout-current-application-value')).toHaveText(SECOND_APPLICATION.application);
+    await expect(page.locator('.layout-current-service-resource-value')).toHaveText(SECOND_SERVICE_RESOURCE.name);
     await expect(page.getByText('数据分析', { exact: true })).toBeVisible();
     await expect(page.getByText('内容编辑', { exact: true })).not.toBeVisible();
-    expect(state.roleRequests).toContain(SECOND_APPLICATION.application);
+    expect(state.roleRequests).toContain(SECOND_SERVICE_RESOURCE.name);
   });
 
   test('创建角色成功后关闭弹窗、重置表单并刷新列表', async ({ page }) => {
     await installAPIMocks(page);
-    await seedApplication(page);
+    await seedServiceResource(page);
     await page.goto('/roles');
 
     await page.getByRole('button', { name: '新建角色', exact: true }).click();
@@ -476,7 +541,7 @@ test.describe('权限中心关键操作流程', () => {
 
   test('用户角色绑定保存后会重新读取服务端角色数据', async ({ page }) => {
     const state = await installAPIMocks(page);
-    await seedApplication(page);
+    await seedServiceResource(page);
     await page.goto('/user-roles');
 
     await page.getByPlaceholder('输入 NexusAuth subject').fill('e2e-user');
@@ -487,7 +552,7 @@ test.describe('权限中心关键操作流程', () => {
     await roleOption.locator('.t-checkbox__input').click();
     const replaceRequest = page.waitForRequest((request) => (
       request.method() === 'PUT'
-      && request.url().includes('/api/v1/users/e2e-user/roles?application=content-platform')
+      && request.url().includes('/api/v1/users/e2e-user/roles?service_resource=content-platform')
     ));
     await page.getByRole('button', { name: '保存绑定', exact: true }).click();
     await replaceRequest;
@@ -502,7 +567,7 @@ test.describe('权限中心关键操作流程', () => {
 
   test('PDP 五类功能使用独立菜单和独立路由', async ({ page }) => {
     await installAPIMocks(page);
-    await seedApplication(page);
+    await seedServiceResource(page);
 
     const pages = [
       ['/authorization/resources', '资源管理'],
@@ -526,7 +591,7 @@ test.describe('权限中心关键操作流程', () => {
 
   test('PDP 创建资源成功后关闭弹窗、重置表单并刷新列表', async ({ page }) => {
     await installAPIMocks(page);
-    await seedApplication(page);
+    await seedServiceResource(page);
     await page.goto('/authorization/resources');
 
     await expect(page).toHaveURL(/\/authorization\/resources$/);
@@ -556,7 +621,7 @@ test.describe('权限中心关键操作流程', () => {
 
   test('PDP 策略模拟会展示 allow 和 deny 结果', async ({ page }) => {
     const state = await installAPIMocks(page);
-    await seedApplication(page);
+    await seedServiceResource(page);
     await page.goto('/authorization/simulator');
 
     await expect(page).toHaveURL(/\/authorization\/simulator$/);

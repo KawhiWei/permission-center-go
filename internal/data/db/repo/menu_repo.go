@@ -9,7 +9,7 @@ import (
 	"github.com/luck/permission-center-go/internal/biz"
 )
 
-const menuColumns = `id, application, parent_id, menu_type, code, name, description,
+const menuColumns = `id, service_resource, application, parent_id, menu_type, code, name, description,
 	route, component, action, http_method, icon, sort_order, metadata,
 	enabled, created_by_id, created_by_name, created_at, updated_by_id, updated_by_name,
 	updated_at, is_deleted`
@@ -26,26 +26,27 @@ func NewMenuRepository(pool *pgxpool.Pool) *MenuRepository {
 }
 
 func (r *MenuRepository) Create(ctx context.Context, menu *biz.Menu) (*biz.Menu, error) {
-	if menu == nil || menu.Application == "" {
-		return nil, fmt.Errorf("%w: menu and application are required", biz.ErrInvalidArgument)
+	if menu == nil || bizScope(menu.ServiceResource, menu.Application) == "" {
+		return nil, fmt.Errorf("%w: menu and service_resource are required", biz.ErrInvalidArgument)
 	}
+	scope := bizScope(menu.ServiceResource, menu.Application)
 	menuID := menu.ID
 	if menuID == uuid.Nil {
 		menuID = uuid.New()
 	}
 	const query = `
 		INSERT INTO menus (
-			id, application, parent_id, menu_type, code, name, description,
+			id, service_resource, application, parent_id, menu_type, code, name, description,
 			route, component, action, http_method, icon, sort_order, metadata, enabled,
 			created_by_id, created_by_name, updated_by_id, updated_by_name, is_deleted
 		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, '{}'::JSONB,
+		VALUES ($1, $2, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, '{}'::JSONB,
 			$14, $15, $16, $15, $16, FALSE)
 		RETURNING ` + menuColumns
 	actor := biz.AuditActorFromContext(ctx)
 	value, err := scanMenu(r.pool.QueryRow(ctx, query,
 		menuID,
-		menu.Application,
+		scope,
 		menu.ParentID,
 		string(menu.Type),
 		menu.Code,
@@ -83,7 +84,7 @@ func (r *MenuRepository) ListByApplication(ctx context.Context, application stri
 	const query = `
 		SELECT ` + menuColumns + `
 		FROM menus
-		WHERE application = $1 AND is_deleted = FALSE AND enabled = TRUE
+		WHERE service_resource = $1 AND is_deleted = FALSE AND enabled = TRUE
 		ORDER BY sort_order, name, id`
 	rows, err := r.pool.Query(ctx, query, application)
 	if err != nil {
