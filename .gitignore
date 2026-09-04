@@ -37,6 +37,8 @@ dashboard/dist/
 dashboard/.vite/
 dashboard/.eslintcache
 dashboard/*.tsbuildinfo
+dashboard/test-results/
+dashboard/playwright-report/
 dashboard/.env
 dashboard/.env.*
 !dashboard/.env.example

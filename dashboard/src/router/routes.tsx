@@ -8,6 +8,11 @@ import ApplicationManagement from '../pages/permission-center/application-manage
 import RoleManagement from '../pages/permission-center/role-management';
 import MenuManagement from '../pages/permission-center/menu-management';
 import UserRoleManagement from '../pages/permission-center/user-role-management';
+import ResourceManagement from '../pages/permission-center/pdp-management/resource-management';
+import ActionManagement from '../pages/permission-center/pdp-management/action-management';
+import APIEndpointManagement from '../pages/permission-center/pdp-management/api-endpoint-management';
+import PolicyManagement from '../pages/permission-center/pdp-management/policy-management';
+import PolicySimulator from '../pages/permission-center/pdp-management/policy-simulator';
 import SelectApplication from '../pages/select-application';
 import {
   consumeLoginRedirect,
@@ -50,23 +55,23 @@ export const routes: RouteObject[] = [
     element: <RequireAuth />,
     children: [
       {
-        id: 'protected-layout',
-        path: '/',
-        Component: PublicLayout,
+        path: '/select-application',
+        Component: SelectApplication,
+        handle: { name: '选择应用' },
+      },
+      {
+        element: <RequireApplication />,
         children: [
           {
-            path: 'select-application',
-            Component: SelectApplication,
-            handle: { name: '选择应用' },
-          },
-          {
-            path: 'applications',
-            Component: ApplicationManagement,
-            handle: { name: '应用管理' },
-          },
-          {
-            element: <RequireApplication />,
+            id: 'protected-layout',
+            path: '/',
+            Component: PublicLayout,
             children: [
+              {
+                path: 'applications',
+                Component: ApplicationManagement,
+                handle: { name: '应用管理' },
+              },
               {
                 path: 'dashboard',
                 Component: Dashboard,
@@ -87,14 +92,43 @@ export const routes: RouteObject[] = [
                 Component: UserRoleManagement,
                 handle: { name: '用户角色绑定' },
               },
+              {
+                path: 'pdp',
+                element: <Navigate to="/authorization/resources" replace />,
+              },
+              {
+                path: 'authorization/resources',
+                Component: ResourceManagement,
+                handle: { name: '资源管理' },
+              },
+              {
+                path: 'authorization/actions',
+                Component: ActionManagement,
+                handle: { name: '动作管理' },
+              },
+              {
+                path: 'authorization/api-endpoints',
+                Component: APIEndpointManagement,
+                handle: { name: 'API 端点管理' },
+              },
+              {
+                path: 'authorization/policies',
+                Component: PolicyManagement,
+                handle: { name: '策略管理' },
+              },
+              {
+                path: 'authorization/simulator',
+                Component: PolicySimulator,
+                handle: { name: '策略模拟' },
+              },
+              {
+                path: '*',
+                Component: ErrorPage,
+              },
             ],
-          },
-          {
-            path: '*',
-            Component: ErrorPage,
+            errorElement: <ErrorPage />,
           },
         ],
-        errorElement: <ErrorPage />,
       },
     ],
   },

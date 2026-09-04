@@ -487,8 +487,19 @@
 }
 
 .permission-select-application-page {
-  max-width: 1040px;
-  margin: 0 auto;
+  width: 100%;
+  max-width: none;
+  min-height: 100%;
+  overflow: auto;
+  padding: 48px 24px;
+  background: var(--app-page);
+}
+
+.permission-select-application-heading,
+.permission-select-application-card {
+  width: min(100%, 1040px);
+  margin-right: auto;
+  margin-left: auto;
 }
 
 .permission-select-application-heading {
@@ -654,6 +665,10 @@
 
   .permission-select-application-card {
     padding: 16px;
+  }
+
+  .permission-select-application-page {
+    padding: 28px 12px;
   }
 
   .permission-toolbar-meta {

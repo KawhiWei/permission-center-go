@@ -74,9 +74,6 @@ const SelectApplicationPage = () => {
           <h1>选择应用</h1>
           <p>请选择要管理的应用。角色、菜单、按钮和用户绑定都会按应用隔离。</p>
         </div>
-        <Button variant="outline" type="button" onClick={() => navigate('/applications')}>
-          应用管理
-        </Button>
       </div>
 
       <Card className="permission-card permission-select-application-card" bordered>
@@ -97,10 +94,7 @@ const SelectApplicationPage = () => {
         ) : activeApplications.length === 0 ? (
           <div className="permission-select-application-empty">
             <strong>暂无可用应用</strong>
-            <span>请先创建并启用一个应用，才能进入权限管理页面。</span>
-            <Button theme="primary" type="button" onClick={() => navigate('/applications')}>
-              前往应用管理
-            </Button>
+            <span>请联系管理员初始化应用后，再进入权限管理页面。</span>
           </div>
         ) : (
           <>

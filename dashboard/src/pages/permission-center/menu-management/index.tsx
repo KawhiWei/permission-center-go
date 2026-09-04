@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type ReactElement } from 're
 import { Button, Card, Dialog, Form, Input, MessagePlugin, Select, Space, Tag } from 'tdesign-react';
 
 import { createMenu, getMenuTree, type CreateMenuRequest, type Menu, type MenuType } from '../../../api/permission';
-import { ApplicationField, getRequestErrorMessage, PageHeader, useApplicationScope } from '../shared';
+import { getRequestErrorMessage, PageHeader, useApplicationScope } from '../shared';
 import '../style.less';
 
 type MenuForm = {
@@ -64,16 +64,7 @@ const renderMenuNode = (node: Menu): ReactElement => (
 const flattenMenus = (nodes: Menu[]): Menu[] => nodes.flatMap((node) => [node, ...flattenMenus(node.children)]);
 
 const MenuManagementPage = () => {
-  const {
-    application,
-    draftApplication,
-    setDraftApplication,
-    applyApplication,
-    applications,
-    applicationsLoading,
-    applicationsError,
-    reloadApplications,
-  } = useApplicationScope();
+  const { application } = useApplicationScope();
   const [tree, setTree] = useState<Menu[]>([]);
   const [loading, setLoading] = useState(false);
   const [dialogVisible, setDialogVisible] = useState(false);
@@ -177,16 +168,6 @@ const MenuManagementPage = () => {
       />
 
       <div className="permission-toolbar">
-        <ApplicationField
-          draftApplication={draftApplication}
-          onDraftChange={setDraftApplication}
-          onApply={applyApplication}
-          loading={loading}
-          applications={applications}
-          applicationsLoading={applicationsLoading}
-          applicationsError={applicationsError}
-          onRefreshApplications={() => void reloadApplications()}
-        />
         <span className="permission-toolbar-meta">{flattenMenus(tree).length} 个权限节点</span>
       </div>
 

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useLocation, useNavigate } from "react-router-dom";
 import { Menu, MenuValue } from "tdesign-react";
-import { DashboardIcon, MenuApplicationIcon, UsergroupIcon, UserIcon, AppIcon } from 'tdesign-icons-react';
+import { DashboardIcon, MenuApplicationIcon, UsergroupIcon, UserIcon, AppIcon, ApiIcon } from 'tdesign-icons-react';
 import { setPageLoading } from '../../../page-loading';
 
 const { MenuItem, SubMenu } = Menu;
@@ -14,7 +14,7 @@ const MenuComponent = (props: IProp) => {
     const { pathname } = useLocation();
     const navigate = useNavigate();
     const [expanded, setExpanded] = useState<string[]>(() => (
-        ['/roles', '/menus', '/user-roles'].includes(pathname) ? ['/permission-center'] : []
+        ['/roles', '/menus', '/user-roles', '/pdp', '/authorization/resources', '/authorization/actions', '/authorization/api-endpoints', '/authorization/policies', '/authorization/simulator'].includes(pathname) ? ['/permission-center'] : []
     ));
 
     const navigateWithLoading = async (nextPath: string) => {
@@ -44,6 +44,11 @@ const MenuComponent = (props: IProp) => {
                 <MenuItem value="/roles" icon={<UsergroupIcon />}>角色管理</MenuItem>
                 <MenuItem value="/menus" icon={<MenuApplicationIcon />}>菜单与按钮管理</MenuItem>
                 <MenuItem value="/user-roles" icon={<UserIcon />}>用户角色绑定</MenuItem>
+                <MenuItem value="/authorization/resources" icon={<ApiIcon />}>资源管理</MenuItem>
+                <MenuItem value="/authorization/actions" icon={<ApiIcon />}>动作管理</MenuItem>
+                <MenuItem value="/authorization/api-endpoints" icon={<ApiIcon />}>API 端点管理</MenuItem>
+                <MenuItem value="/authorization/policies" icon={<ApiIcon />}>策略管理</MenuItem>
+                <MenuItem value="/authorization/simulator" icon={<ApiIcon />}>策略模拟</MenuItem>
             </SubMenu>
         </Menu>
     );

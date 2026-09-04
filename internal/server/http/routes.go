@@ -33,5 +33,42 @@ func NewServer(handler *Handler, authMiddleware ...func(http.Handler) http.Handl
 	mux.Handle("GET /v1/roles/{roleID}/menus", protect(http.HandlerFunc(handler.RoleMenus)))
 	mux.Handle("PUT /v1/users/{userID}/roles", protect(http.HandlerFunc(handler.ReplaceUserRoles)))
 	mux.Handle("GET /v1/users/{userID}/roles", protect(http.HandlerFunc(handler.UserRoles)))
+
+	// PDP management and decision endpoints are independent from the existing
+	// menu/button tree. The POST policy item route also catches the colon form
+	// `/policies/{id}:simulate`; the handler strips the suffix before parsing
+	// the UUID. A slash alias is provided for clients that cannot emit colons in
+	// route templates.
+	mux.Handle("POST /v1/authorization/resources", protect(http.HandlerFunc(handler.CreateAuthorizationResource)))
+	mux.Handle("GET /v1/authorization/resources", protect(http.HandlerFunc(handler.ListAuthorizationResources)))
+	mux.Handle("GET /v1/authorization/resources/{id}", protect(http.HandlerFunc(handler.GetAuthorizationResource)))
+	mux.Handle("PUT /v1/authorization/resources/{id}", protect(http.HandlerFunc(handler.UpdateAuthorizationResource)))
+	mux.Handle("DELETE /v1/authorization/resources/{id}", protect(http.HandlerFunc(handler.DeleteAuthorizationResource)))
+
+	mux.Handle("POST /v1/authorization/actions", protect(http.HandlerFunc(handler.CreateAuthorizationAction)))
+	mux.Handle("GET /v1/authorization/actions", protect(http.HandlerFunc(handler.ListAuthorizationActions)))
+	mux.Handle("GET /v1/authorization/actions/{id}", protect(http.HandlerFunc(handler.GetAuthorizationAction)))
+	mux.Handle("PUT /v1/authorization/actions/{id}", protect(http.HandlerFunc(handler.UpdateAuthorizationAction)))
+	mux.Handle("DELETE /v1/authorization/actions/{id}", protect(http.HandlerFunc(handler.DeleteAuthorizationAction)))
+
+	mux.Handle("POST /v1/authorization/api-endpoints", protect(http.HandlerFunc(handler.CreateAuthorizationAPIEndpoint)))
+	mux.Handle("GET /v1/authorization/api-endpoints", protect(http.HandlerFunc(handler.ListAuthorizationAPIEndpoints)))
+	mux.Handle("GET /v1/authorization/api-endpoints/{id}", protect(http.HandlerFunc(handler.GetAuthorizationAPIEndpoint)))
+	mux.Handle("PUT /v1/authorization/api-endpoints/{id}", protect(http.HandlerFunc(handler.UpdateAuthorizationAPIEndpoint)))
+	mux.Handle("DELETE /v1/authorization/api-endpoints/{id}", protect(http.HandlerFunc(handler.DeleteAuthorizationAPIEndpoint)))
+
+	mux.Handle("POST /v1/authorization/policies", protect(http.HandlerFunc(handler.CreateAuthorizationPolicy)))
+	mux.Handle("GET /v1/authorization/policies", protect(http.HandlerFunc(handler.ListAuthorizationPolicies)))
+	mux.Handle("GET /v1/authorization/policies/{id}", protect(http.HandlerFunc(handler.GetAuthorizationPolicy)))
+	mux.Handle("PUT /v1/authorization/policies/{id}", protect(http.HandlerFunc(handler.UpdateAuthorizationPolicy)))
+	mux.Handle("DELETE /v1/authorization/policies/{id}", protect(http.HandlerFunc(handler.DeleteAuthorizationPolicy)))
+	mux.Handle("GET /v1/authorization/policies/{id}/bindings", protect(http.HandlerFunc(handler.GetAuthorizationPolicyBindings)))
+	mux.Handle("PUT /v1/authorization/policies/{id}/bindings", protect(http.HandlerFunc(handler.ReplaceAuthorizationPolicyBindings)))
+	mux.Handle("POST /v1/authorization/policies/{id}/simulate", protect(http.HandlerFunc(handler.SimulateAuthorizationPolicy)))
+	// Go's ServeMux requires a wildcard to occupy an entire path segment. This
+	// route therefore handles `/v1/authorization/policies/{id}:simulate` by
+	// passing the suffix through to SimulateAuthorizationPolicy.
+	mux.Handle("POST /v1/authorization/policies/{id}", protect(http.HandlerFunc(handler.SimulateAuthorizationPolicy)))
+	mux.Handle("POST /v1/pdp/decisions", protect(http.HandlerFunc(handler.DecidePDP)))
 	return mux
 }

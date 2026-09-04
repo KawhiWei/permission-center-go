@@ -2,20 +2,11 @@ import { useCallback, useEffect, useState } from 'react';
 import { Button, Card, Checkbox, Input, MessagePlugin, Space, Tag } from 'tdesign-react';
 
 import { getUserRoleIDs, listRoles, replaceUserRoles, type Role } from '../../../api/permission';
-import { ApplicationField, getRequestErrorMessage, PageHeader, useApplicationScope } from '../shared';
+import { getRequestErrorMessage, PageHeader, useApplicationScope } from '../shared';
 import '../style.less';
 
 const UserRoleManagementPage = () => {
-  const {
-    application,
-    draftApplication,
-    setDraftApplication,
-    applyApplication,
-    applications,
-    applicationsLoading,
-    applicationsError,
-    reloadApplications,
-  } = useApplicationScope();
+  const { application } = useApplicationScope();
   const [userID, setUserID] = useState('');
   const [loadedUserID, setLoadedUserID] = useState('');
   const [roles, setRoles] = useState<Role[]>([]);
@@ -76,8 +67,13 @@ const UserRoleManagementPage = () => {
     setSaving(true);
     try {
       await replaceUserRoles(loadedUserID, application, selectedRoleIDs);
+      const [nextRoles, assignedRoleIDs] = await Promise.all([
+        listRoles(application),
+        getUserRoleIDs(loadedUserID, application),
+      ]);
+      setRoles(nextRoles);
+      setSelectedRoleIDs(assignedRoleIDs);
       MessagePlugin.success('用户角色绑定已保存');
-      await loadUserRoles(loadedUserID);
     } catch (error) {
       MessagePlugin.error(getRequestErrorMessage(error, '保存用户角色失败'));
     } finally {
@@ -97,16 +93,6 @@ const UserRoleManagementPage = () => {
       />
 
       <div className="permission-toolbar permission-user-role-toolbar">
-        <ApplicationField
-          draftApplication={draftApplication}
-          onDraftChange={setDraftApplication}
-          onApply={applyApplication}
-          loading={loading}
-          applications={applications}
-          applicationsLoading={applicationsLoading}
-          applicationsError={applicationsError}
-          onRefreshApplications={() => void reloadApplications()}
-        />
         <Space className="permission-user-query">
           <Input
             value={userID}

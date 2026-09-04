@@ -15,6 +15,7 @@ import (
 type Handler struct {
 	permissions  *biz.PermissionService
 	applications *biz.ApplicationService
+	pdp          *biz.PDPService
 	auth         *auth.Service
 }
 

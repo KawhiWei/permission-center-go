@@ -14,6 +14,7 @@ import (
 type Application struct {
 	Pool         *pgxpool.Pool
 	Permissions  *biz.PermissionService
+	PDP          *biz.PDPService
 	Applications *biz.ApplicationService
 	Auth         *auth.Service
 }
@@ -33,7 +34,9 @@ func New(ctx context.Context, cfg *config.Config) (*Application, error) {
 		return nil, err
 	}
 	permissions := biz.NewPermissionService(roles, menus, userRoles).WithApplicationRepository(applications)
-	return &Application{Pool: pool, Permissions: permissions, Applications: biz.NewApplicationService(applications, cfg.ApplicationCatalog.Source), Auth: authenticator}, nil
+	pdpRepository := repo.NewPDPRepository(pool)
+	pdp := biz.NewPDPService(pdpRepository, userRoles, roles).WithApplicationRepository(applications)
+	return &Application{Pool: pool, Permissions: permissions, PDP: pdp, Applications: biz.NewApplicationService(applications, cfg.ApplicationCatalog.Source), Auth: authenticator}, nil
 }
 
 func (a *Application) Close() {

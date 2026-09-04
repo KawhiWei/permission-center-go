@@ -53,10 +53,13 @@
   .layout-header-edit {
     display: flex;
     align-items: center;
+    min-width: 0;
 
     .t-space {
       align-items: center;
       gap: 8px !important;
+      min-width: 0;
+      max-width: 100%;
     }
 
     .t-space-item {
@@ -72,6 +75,44 @@
     .t-input {
       border-color: transparent;
       background: transparent;
+    }
+
+    .layout-current-application {
+      display: flex;
+      align-items: center;
+      min-width: 0;
+      max-width: 220px;
+      gap: 6px;
+      color: var(--app-text-secondary);
+      white-space: nowrap;
+    }
+
+    .layout-current-application-label {
+      flex: 0 0 auto;
+      font-size: 12px;
+    }
+
+    .layout-current-application-value {
+      display: block;
+      min-width: 0;
+      overflow: hidden;
+      color: var(--app-text);
+      font-size: 13px;
+      font-weight: 600;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .layout-application-switch.t-button {
+      flex-shrink: 0;
+      padding: 0 6px;
+      color: var(--app-accent);
+      white-space: nowrap;
+
+      &:hover {
+        color: var(--app-accent);
+        background: var(--app-accent-soft);
+      }
     }
 
     .t-button {
@@ -362,6 +403,10 @@
     .layout-header-edit .t-input {
       width: 160px !important;
     }
+
+    .layout-header-edit .layout-current-application {
+      max-width: 160px;
+    }
   }
 }
 
@@ -373,6 +418,14 @@
     }
 
     .layout-header-edit .t-input__wrap {
+      display: none;
+    }
+
+    .layout-header-edit .layout-current-application {
+      max-width: 120px;
+    }
+
+    .layout-header-edit .layout-current-application-label {
       display: none;
     }
 

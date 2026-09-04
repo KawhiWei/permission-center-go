@@ -10,7 +10,7 @@ import {
   type Menu,
   type Role,
 } from '../../../api/permission';
-import { ApplicationField, formatDateTime, getRequestErrorMessage, PageHeader, useApplicationScope } from '../shared';
+import { formatDateTime, getRequestErrorMessage, PageHeader, useApplicationScope } from '../shared';
 import '../style.less';
 
 type RoleForm = {
@@ -32,16 +32,7 @@ const flattenMenus = (nodes: Menu[], depth = 0): FlatMenu[] => nodes.flatMap((me
 ]);
 
 const RoleManagementPage = () => {
-  const {
-    application,
-    draftApplication,
-    setDraftApplication,
-    applyApplication,
-    applications,
-    applicationsLoading,
-    applicationsError,
-    reloadApplications,
-  } = useApplicationScope();
+  const { application } = useApplicationScope();
   const [roles, setRoles] = useState<Role[]>([]);
   const [loading, setLoading] = useState(false);
   const [dialogVisible, setDialogVisible] = useState(false);
@@ -160,16 +151,6 @@ const RoleManagementPage = () => {
       />
 
       <div className="permission-toolbar">
-        <ApplicationField
-          draftApplication={draftApplication}
-          onDraftChange={setDraftApplication}
-          onApply={applyApplication}
-          loading={loading}
-          applications={applications}
-          applicationsLoading={applicationsLoading}
-          applicationsError={applicationsError}
-          onRefreshApplications={() => void reloadApplications()}
-        />
         <span className="permission-toolbar-meta">共 {roles.length} 个启用角色</span>
       </div>
 

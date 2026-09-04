@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Button, Card, MessagePlugin, Space, Tag } from 'tdesign-react';
 
 import { getMenuTree, listRoles, type Menu, type Role } from '../../../api/permission';
-import { ApplicationField, getRequestErrorMessage, PageHeader, useApplicationScope } from '../shared';
+import { getRequestErrorMessage, PageHeader, useApplicationScope } from '../shared';
 import '../style.less';
 
 type MenuCounts = {
@@ -24,16 +24,7 @@ const countMenuTree = (nodes: Menu[]): MenuCounts => {
 };
 
 const DashboardPage = () => {
-  const {
-    application,
-    draftApplication,
-    setDraftApplication,
-    applyApplication,
-    applications,
-    applicationsLoading,
-    applicationsError,
-    reloadApplications,
-  } = useApplicationScope();
+  const { application } = useApplicationScope();
   const [roles, setRoles] = useState<Role[]>([]);
   const [menuCounts, setMenuCounts] = useState<MenuCounts>({ menus: 0, buttons: 0 });
   const [loading, setLoading] = useState(false);
@@ -72,16 +63,6 @@ const DashboardPage = () => {
       />
 
       <div className="permission-toolbar">
-        <ApplicationField
-          draftApplication={draftApplication}
-          onDraftChange={setDraftApplication}
-          onApply={applyApplication}
-          loading={loading}
-          applications={applications}
-          applicationsLoading={applicationsLoading}
-          applicationsError={applicationsError}
-          onRefreshApplications={() => void reloadApplications()}
-        />
         <span className="permission-toolbar-meta">当前应用：{application}</span>
       </div>
 
