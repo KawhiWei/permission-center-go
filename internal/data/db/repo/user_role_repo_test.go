@@ -8,18 +8,18 @@ import (
 )
 
 func TestNormalizeUserRoleScope(t *testing.T) {
-	subject, application, err := normalizeUserRoleScope(" user-1 ", " admin ")
+	subject, serviceResource, err := normalizeUserRoleScope(" user-1 ", " admin ")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if subject != "user-1" || application != "admin" {
-		t.Fatalf("scope = %q/%q", subject, application)
+	if subject != "user-1" || serviceResource != "admin" {
+		t.Fatalf("scope = %q/%q", subject, serviceResource)
 	}
 	if _, _, err := normalizeUserRoleScope("", "admin"); !errors.Is(err, biz.ErrInvalidArgument) {
 		t.Fatalf("empty subject error = %v", err)
 	}
 	if _, _, err := normalizeUserRoleScope("user-1", " "); !errors.Is(err, biz.ErrInvalidArgument) {
-		t.Fatalf("empty application error = %v", err)
+		t.Fatalf("empty service resource error = %v", err)
 	}
 }
 

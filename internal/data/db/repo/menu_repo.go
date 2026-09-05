@@ -3,20 +3,20 @@ package repo
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/luck/permission-center-go/internal/biz"
 )
 
-const menuColumns = `id, service_resource, application, parent_id, menu_type, code, name, description,
-	route, component, action, http_method, icon, sort_order, metadata,
+const menuColumns = `id, service_resource, parent_id, menu_type, code, name, description,
+	COALESCE(route, ''), COALESCE(component, ''), COALESCE(action, ''),
+	COALESCE(http_method, ''), COALESCE(icon, ''), sort_order, metadata,
 	enabled, created_by_id, created_by_name, created_at, updated_by_id, updated_by_name,
 	updated_at, is_deleted`
 
-// MenuRepository stores both menu and button nodes. The database owns the
-// same-application and parent-type constraints; this repository only maps the
-// persistence record to the business entity.
+// MenuRepository 保存菜单和按钮节点，数据库负责父子节点的服务资源约束。
 type MenuRepository struct {
 	pool *pgxpool.Pool
 }
@@ -26,21 +26,21 @@ func NewMenuRepository(pool *pgxpool.Pool) *MenuRepository {
 }
 
 func (r *MenuRepository) Create(ctx context.Context, menu *biz.Menu) (*biz.Menu, error) {
-	if menu == nil || bizScope(menu.ServiceResource, menu.Application) == "" {
+	if menu == nil || strings.TrimSpace(menu.ServiceResource) == "" {
 		return nil, fmt.Errorf("%w: menu and service_resource are required", biz.ErrInvalidArgument)
 	}
-	scope := bizScope(menu.ServiceResource, menu.Application)
+	scope := strings.TrimSpace(menu.ServiceResource)
 	menuID := menu.ID
 	if menuID == uuid.Nil {
 		menuID = uuid.New()
 	}
 	const query = `
 		INSERT INTO menus (
-			id, service_resource, application, parent_id, menu_type, code, name, description,
+			id, service_resource, parent_id, menu_type, code, name, description,
 			route, component, action, http_method, icon, sort_order, metadata, enabled,
 			created_by_id, created_by_name, updated_by_id, updated_by_name, is_deleted
 		)
-		VALUES ($1, $2, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, '{}'::JSONB,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, '{}'::JSONB,
 			$14, $15, $16, $15, $16, FALSE)
 		RETURNING ` + menuColumns
 	actor := biz.AuditActorFromContext(ctx)
@@ -72,7 +72,7 @@ func (r *MenuRepository) Get(ctx context.Context, id uuid.UUID) (*biz.Menu, erro
 	const query = `
 		SELECT ` + menuColumns + `
 		FROM menus
-		WHERE id = $1 AND is_deleted = FALSE AND enabled = TRUE`
+		WHERE id = $1 AND is_deleted = FALSE`
 	value, err := scanMenu(r.pool.QueryRow(ctx, query, id))
 	if err != nil {
 		return nil, mapDBError(err)
@@ -80,13 +80,13 @@ func (r *MenuRepository) Get(ctx context.Context, id uuid.UUID) (*biz.Menu, erro
 	return toBizMenu(value), nil
 }
 
-func (r *MenuRepository) ListByApplication(ctx context.Context, application string) ([]*biz.Menu, error) {
+func (r *MenuRepository) ListByServiceResource(ctx context.Context, serviceResource string) ([]*biz.Menu, error) {
 	const query = `
 		SELECT ` + menuColumns + `
 		FROM menus
-		WHERE service_resource = $1 AND is_deleted = FALSE AND enabled = TRUE
+		WHERE service_resource = $1 AND is_deleted = FALSE
 		ORDER BY sort_order, name, id`
-	rows, err := r.pool.Query(ctx, query, application)
+	rows, err := r.pool.Query(ctx, query, serviceResource)
 	if err != nil {
 		return nil, mapDBError(err)
 	}
@@ -105,9 +105,7 @@ func (r *MenuRepository) ListByApplication(ctx context.Context, application stri
 	return menus, nil
 }
 
-// Update changes mutable menu metadata without changing its application
-// or parent. Moving a node is deliberately a separate operation so a caller
-// can validate a tree edit explicitly.
+// Update 更新菜单可变信息，不改变服务资源、父节点和类型，并写入更新审计信息。
 func (r *MenuRepository) Update(ctx context.Context, menu *biz.Menu) (*biz.Menu, error) {
 	if menu == nil || menu.ID == uuid.Nil {
 		return nil, fmt.Errorf("%w: menu id is required", biz.ErrInvalidArgument)
@@ -145,19 +143,51 @@ func (r *MenuRepository) SetEnabled(ctx context.Context, id uuid.UUID, enabled b
 	return toBizMenu(value), nil
 }
 
+// SoftDelete 在一个事务中软删除菜单及其角色菜单关联，并拒绝仍有子节点的菜单。
 func (r *MenuRepository) SoftDelete(ctx context.Context, id uuid.UUID) error {
-	const query = `
-		UPDATE menus
-		SET is_deleted = TRUE, enabled = FALSE,
-			updated_by_id = $2, updated_by_name = $3, updated_at = NOW()
-		WHERE id = $1 AND is_deleted = FALSE`
 	actor := biz.AuditActorFromContext(ctx)
-	result, err := r.pool.Exec(ctx, query, id, actor.ID, actor.Name)
+	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return mapDBError(err)
 	}
-	if result.RowsAffected() == 0 {
-		return biz.ErrNotFound
+	defer tx.Rollback(ctx)
+
+	var exists bool
+	if err := tx.QueryRow(ctx, `
+		SELECT TRUE
+		FROM menus
+		WHERE id = $1 AND is_deleted = FALSE
+		FOR UPDATE`, id).Scan(&exists); err != nil {
+		return mapDBError(err)
+	}
+	var hasChildren bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM menus
+			WHERE parent_id = $1 AND is_deleted = FALSE
+		)`, id).Scan(&hasChildren); err != nil {
+		return mapDBError(err)
+	}
+	if hasChildren {
+		return fmt.Errorf("%w: menu has undeleted child nodes", biz.ErrConflict)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE menus
+		SET is_deleted = TRUE, enabled = FALSE,
+			updated_by_id = $2, updated_by_name = $3, updated_at = NOW()
+		WHERE id = $1 AND is_deleted = FALSE`, id, actor.ID, actor.Name); err != nil {
+		return mapDBError(err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE role_menus
+		SET is_deleted = TRUE,
+			updated_by_id = $2, updated_by_name = $3, updated_at = NOW()
+		WHERE menu_id = $1 AND is_deleted = FALSE`, id, actor.ID, actor.Name); err != nil {
+		return mapDBError(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return mapDBError(err)
 	}
 	return nil
 }

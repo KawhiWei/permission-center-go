@@ -1,7 +1,16 @@
 import { useCallback, useEffect, useMemo, useState, type ReactElement } from 'react';
-import { Button, Card, Dialog, Form, Input, MessagePlugin, Select, Space, Tag } from 'tdesign-react';
+import { Button, Card, Dialog, Drawer, Form, Input, MessagePlugin, Select, Space, Tag } from 'tdesign-react';
 
-import { createMenu, getMenuTree, type CreateMenuRequest, type Menu, type MenuType } from '../../../api/permission';
+import {
+  createMenu,
+  deleteMenu,
+  getMenuTree,
+  updateMenu,
+  type CreateMenuRequest,
+  type Menu,
+  type MenuType,
+  type UpdateMenuRequest,
+} from '../../../api/permission';
 import { getRequestErrorMessage, PageHeader, useServiceResourceScope } from '../shared';
 import '../style.less';
 
@@ -17,6 +26,7 @@ type MenuForm = {
   httpMethod: string;
   icon: string;
   sort: string;
+  enabled: boolean;
 };
 
 const EMPTY_MENU_FORM: MenuForm = {
@@ -31,6 +41,7 @@ const EMPTY_MENU_FORM: MenuForm = {
   httpMethod: 'GET',
   icon: '',
   sort: '0',
+  enabled: true,
 };
 
 const menuTypeOptions = [
@@ -40,7 +51,18 @@ const menuTypeOptions = [
 
 const httpMethodOptions = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map((method) => ({ label: method, value: method }));
 
-const renderMenuNode = (node: Menu): ReactElement => (
+const statusOptions = [
+  { label: '启用', value: 'enabled' },
+  { label: '停用', value: 'disabled' },
+];
+
+type MenuEditorState = {
+  visible: boolean;
+  editingMenu: Menu | null;
+  form: MenuForm;
+};
+
+const renderMenuNode = (node: Menu, onEdit: (menu: Menu) => void, onDelete: (menu: Menu) => void): ReactElement => (
   <div key={node.id} className="permission-tree-node">
     <div className="permission-tree-row">
       <div className="permission-tree-label">
@@ -48,6 +70,9 @@ const renderMenuNode = (node: Menu): ReactElement => (
           {node.type === 'menu' ? '菜单' : '按钮'}
         </Tag>
         <strong title={node.name}>{node.name || '-'}</strong>
+        <Tag theme={node.enabled ? 'success' : 'default'} variant="light-outline">
+          {node.enabled ? '启用' : '停用'}
+        </Tag>
       </div>
       <div className="permission-tree-meta permission-table-code" title={node.code}>{node.code || '-'}</div>
       <div className="permission-tree-meta" title={node.type === 'button' ? node.apiPath : node.path}>
@@ -56,20 +81,55 @@ const renderMenuNode = (node: Menu): ReactElement => (
       <div className="permission-tree-meta" title={node.type === 'menu' ? node.component : node.description}>
         {node.type === 'menu' ? node.component || '-' : node.description || '-'}
       </div>
+      <div className="permission-tree-actions">
+        <Space size="small">
+          <Button variant="text" theme="primary" type="button" onClick={() => onEdit(node)}>编辑</Button>
+          <Button variant="text" theme="danger" type="button" onClick={() => onDelete(node)}>删除</Button>
+        </Space>
+      </div>
     </div>
-    {node.children.length > 0 ? <div className="permission-tree-children">{node.children.map(renderMenuNode)}</div> : null}
+    {node.children.length > 0 ? (
+      <div className="permission-tree-children">
+        {node.children.map((child) => renderMenuNode(child, onEdit, onDelete))}
+      </div>
+    ) : null}
   </div>
 );
 
 const flattenMenus = (nodes: Menu[]): Menu[] => nodes.flatMap((node) => [node, ...flattenMenus(node.children)]);
 
+const replaceMenuNode = (nodes: Menu[], updated: Menu): Menu[] => nodes.map((node) => (
+  node.id === updated.id
+    ? { ...updated, children: node.children }
+    : { ...node, children: replaceMenuNode(node.children, updated) }
+));
+
+const appendMenuNode = (nodes: Menu[], created: Menu): Menu[] => {
+  if (!created.parentId) {
+    return [...nodes, created];
+  }
+  return nodes.map((node) => node.id === created.parentId
+    ? { ...node, children: [...node.children, created] }
+    : { ...node, children: appendMenuNode(node.children, created) });
+};
+
+const removeMenuNode = (nodes: Menu[], menuID: string): Menu[] => nodes
+  .filter((node) => node.id !== menuID)
+  .map((node) => ({ ...node, children: removeMenuNode(node.children, menuID) }));
+
 const MenuManagementPage = () => {
   const { serviceResource } = useServiceResourceScope();
   const [tree, setTree] = useState<Menu[]>([]);
   const [loading, setLoading] = useState(false);
-  const [dialogVisible, setDialogVisible] = useState(false);
-  const [menuForm, setMenuForm] = useState<MenuForm>(EMPTY_MENU_FORM);
-  const [creating, setCreating] = useState(false);
+  const [menuEditor, setMenuEditor] = useState<MenuEditorState>({
+    visible: false,
+    editingMenu: null,
+    form: { ...EMPTY_MENU_FORM },
+  });
+  const [savingMenu, setSavingMenu] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Menu | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const { editingMenu, form: menuForm, visible: drawerVisible } = menuEditor;
 
   const loadTree = useCallback(async (scope: string) => {
     setLoading(true);
@@ -89,25 +149,66 @@ const MenuManagementPage = () => {
 
   const menuParents = useMemo(
     () => flattenMenus(tree)
-      .filter((menu) => menu.type === 'menu')
+      .filter((menu) => menu.type === 'menu' && menu.enabled)
       .map((menu) => ({ label: menu.name || menu.code, value: menu.id })),
     [tree],
   );
 
-  const openCreateDialog = (type: MenuType) => {
-    setMenuForm({ ...EMPTY_MENU_FORM, type });
-    setDialogVisible(true);
+  const resetMenuEditor = () => {
+    setMenuEditor((current) => ({
+      ...current,
+      visible: false,
+      editingMenu: null,
+      form: { ...EMPTY_MENU_FORM },
+    }));
   };
 
-  const closeCreateDialog = () => {
-    if (creating) {
+  const openCreateDrawer = (type: MenuType) => {
+    setMenuEditor((current) => ({
+      ...current,
+      visible: true,
+      editingMenu: null,
+      form: { ...EMPTY_MENU_FORM, type },
+    }));
+  };
+
+  const openEditDrawer = (menu: Menu) => {
+    setMenuEditor((current) => ({
+      ...current,
+      visible: true,
+      editingMenu: menu,
+      form: {
+        type: menu.type,
+        parentId: menu.parentId || '',
+        code: menu.code,
+        name: menu.name,
+        description: menu.description,
+        path: menu.path,
+        component: menu.component,
+        apiPath: menu.apiPath,
+        httpMethod: menu.httpMethod || 'GET',
+        icon: menu.icon,
+        sort: String(menu.sort),
+        enabled: menu.enabled,
+      },
+    }));
+  };
+
+  const updateMenuForm = (update: (previous: MenuForm) => MenuForm) => {
+    setMenuEditor((current) => ({
+      ...current,
+      form: update(current.form),
+    }));
+  };
+
+  const closeMenuEditor = () => {
+    if (savingMenu) {
       return;
     }
-    setDialogVisible(false);
-    setMenuForm({ ...EMPTY_MENU_FORM });
+    resetMenuEditor();
   };
 
-  const submitCreateMenu = async () => {
+  const submitMenu = async () => {
     const code = menuForm.code.trim();
     const name = menuForm.name.trim();
     const apiPath = menuForm.apiPath.trim();
@@ -125,32 +226,68 @@ const MenuManagementPage = () => {
     }
 
     const parsedSort = Number(menuForm.sort);
-    const payload: CreateMenuRequest = {
-      service_resource: serviceResource,
-      parent_id: menuForm.parentId || null,
-      code,
-      name,
-      description: menuForm.description.trim(),
-      type: menuForm.type,
-      path: menuForm.type === 'menu' ? menuForm.path.trim() : '',
-      component: menuForm.type === 'menu' ? menuForm.component.trim() : '',
-      api_path: menuForm.type === 'button' ? apiPath : '',
-      http_method: menuForm.type === 'button' ? menuForm.httpMethod : '',
-      icon: menuForm.type === 'menu' ? menuForm.icon.trim() : '',
-      sort: Number.isFinite(parsedSort) ? parsedSort : 0,
-    };
+    const sort = Number.isFinite(parsedSort) ? parsedSort : 0;
+    const editing = editingMenu;
 
-    setCreating(true);
+    setSavingMenu(true);
     try {
-      await createMenu(payload);
-      setDialogVisible(false);
-      setMenuForm({ ...EMPTY_MENU_FORM });
-      MessagePlugin.success(`${menuForm.type === 'menu' ? '菜单' : '按钮'}已创建`);
-      await loadTree(serviceResource);
+      if (editing) {
+        const payload: UpdateMenuRequest = {
+          code,
+          name,
+          description: menuForm.description.trim(),
+          path: menuForm.path.trim(),
+          component: menuForm.component.trim(),
+          api_path: apiPath,
+          http_method: menuForm.httpMethod,
+          icon: menuForm.icon.trim(),
+          sort,
+          enabled: menuForm.enabled,
+        };
+        const updated = await updateMenu(editing.id, payload);
+        setTree((current) => replaceMenuNode(current, updated));
+      } else {
+        const payload: CreateMenuRequest = {
+          service_resource: serviceResource,
+          parent_id: menuForm.parentId || null,
+          code,
+          name,
+          description: menuForm.description.trim(),
+          type: menuForm.type,
+          path: menuForm.type === 'menu' ? menuForm.path.trim() : '',
+          component: menuForm.type === 'menu' ? menuForm.component.trim() : '',
+          api_path: menuForm.type === 'button' ? apiPath : '',
+          http_method: menuForm.type === 'button' ? menuForm.httpMethod : '',
+          icon: menuForm.type === 'menu' ? menuForm.icon.trim() : '',
+          sort,
+        };
+        const created = await createMenu(payload);
+        setTree((current) => appendMenuNode(current, created));
+      }
+      resetMenuEditor();
+      MessagePlugin.success(editing ? '权限节点已更新' : `${menuForm.type === 'menu' ? '菜单' : '按钮'}已创建`);
     } catch (error) {
-      MessagePlugin.error(getRequestErrorMessage(error, '创建权限节点失败'));
+      MessagePlugin.error(getRequestErrorMessage(error, editing ? '更新权限节点失败' : '创建权限节点失败'));
     } finally {
-      setCreating(false);
+      setSavingMenu(false);
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) {
+      return;
+    }
+    const target = deleteTarget;
+    setDeleting(true);
+    try {
+      await deleteMenu(target.id);
+      setTree((current) => removeMenuNode(current, target.id));
+      setDeleteTarget(null);
+      MessagePlugin.success('权限节点已删除');
+    } catch (error) {
+      MessagePlugin.error(getRequestErrorMessage(error, '删除权限节点失败'));
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -161,8 +298,8 @@ const MenuManagementPage = () => {
         description="维护服务资源导航树和操作按钮，菜单与按钮使用类型严格区分"
         actions={(
           <Space>
-            <Button variant="outline" theme="primary" type="button" onClick={() => openCreateDialog('menu')}>新建菜单</Button>
-            <Button theme="primary" type="button" onClick={() => openCreateDialog('button')}>新建按钮</Button>
+            <Button variant="outline" theme="primary" type="button" onClick={() => openCreateDrawer('menu')}>新建菜单</Button>
+            <Button theme="primary" type="button" onClick={() => openCreateDrawer('button')}>新建按钮</Button>
           </Space>
         )}
       />
@@ -178,80 +315,113 @@ const MenuManagementPage = () => {
             <span>编码</span>
             <span>路由 / API</span>
             <span>组件 / 描述</span>
+            <span>操作</span>
           </div>
           {loading ? (
             <div className="permission-empty">正在加载菜单树...</div>
           ) : tree.length === 0 ? (
           <div className="permission-empty">当前服务资源暂无菜单或按钮</div>
-          ) : tree.map(renderMenuNode)}
+          ) : tree.map((node) => renderMenuNode(node, openEditDrawer, setDeleteTarget))}
         </div>
       </Card>
 
-      <Dialog
-        visible={dialogVisible}
-        header={`新建${menuForm.type === 'menu' ? '菜单' : '按钮'}`}
-        width={720}
-        confirmBtn={{ content: '创建', theme: 'primary', loading: creating }}
-        cancelBtn="取消"
-        confirmLoading={creating}
-        onConfirm={() => void submitCreateMenu()}
-        onCancel={closeCreateDialog}
-        onClose={closeCreateDialog}
-        destroyOnClose
-      >
-        <Form className="permission-inline-form" labelAlign="top">
-          <Form.FormItem label="类型">
+      {drawerVisible ? (
+        <Drawer
+          visible
+          header={editingMenu ? `编辑${menuForm.type === 'menu' ? '菜单' : '按钮'}` : `新建${menuForm.type === 'menu' ? '菜单' : '按钮'}`}
+          size="560px"
+          confirmBtn={{ content: editingMenu ? '保存' : '创建', theme: 'primary', loading: savingMenu }}
+          cancelBtn="取消"
+          onConfirm={() => void submitMenu()}
+          onCancel={closeMenuEditor}
+          onClose={closeMenuEditor}
+        >
+          <Form className="permission-drawer-form" labelAlign="top" initialData={menuForm}>
+          <Form.FormItem label="类型" name="type">
             <Select
               value={menuForm.type}
               options={menuTypeOptions}
-              onChange={(value) => setMenuForm((prev) => ({ ...prev, type: value === 'button' ? 'button' : 'menu' }))}
+              disabled={Boolean(editingMenu)}
+              onChange={(value) => updateMenuForm((prev) => ({ ...prev, type: value === 'button' ? 'button' : 'menu' }))}
             />
           </Form.FormItem>
-          <Form.FormItem label="父级菜单" help="菜单可作为根节点或挂在已有菜单下，按钮必须挂在菜单下。">
+          <Form.FormItem label="父级菜单" name="parentId" help="菜单可作为根节点或挂在已有菜单下，按钮必须挂在菜单下。">
             <Select
               value={menuForm.parentId}
               options={[{ label: '根节点', value: '' }, ...menuParents]}
               placeholder="请选择父级菜单"
               filterable
-              onChange={(value) => setMenuForm((prev) => ({ ...prev, parentId: String(value || '') }))}
+              disabled={Boolean(editingMenu)}
+              onChange={(value) => updateMenuForm((prev) => ({ ...prev, parentId: String(value || '') }))}
             />
           </Form.FormItem>
-          <Form.FormItem label="编码">
-            <Input value={menuForm.code} maxlength={100} placeholder="例如 article-management" onChange={(value) => setMenuForm((prev) => ({ ...prev, code: value }))} />
+          <Form.FormItem label="编码" name="code">
+            <Input value={menuForm.code} maxlength={100} placeholder="例如 article-management" onChange={(value) => updateMenuForm((prev) => ({ ...prev, code: value }))} />
           </Form.FormItem>
-          <Form.FormItem label="名称">
-            <Input value={menuForm.name} maxlength={100} placeholder="例如 文章管理" onChange={(value) => setMenuForm((prev) => ({ ...prev, name: value }))} />
+          <Form.FormItem label="名称" name="name">
+            <Input value={menuForm.name} maxlength={100} placeholder="例如 文章管理" onChange={(value) => updateMenuForm((prev) => ({ ...prev, name: value }))} />
           </Form.FormItem>
-          <Form.FormItem label="排序">
-            <Input type="number" value={menuForm.sort} placeholder="0" onChange={(value) => setMenuForm((prev) => ({ ...prev, sort: value }))} />
+          <Form.FormItem label="排序" name="sort">
+            <Input type="number" value={menuForm.sort} placeholder="0" onChange={(value) => updateMenuForm((prev) => ({ ...prev, sort: value }))} />
           </Form.FormItem>
-          <Form.FormItem label="描述">
-            <Input value={menuForm.description} maxlength={200} placeholder="可选" onChange={(value) => setMenuForm((prev) => ({ ...prev, description: value }))} />
+          <Form.FormItem label="描述" name="description">
+            <Input value={menuForm.description} maxlength={200} placeholder="可选" onChange={(value) => updateMenuForm((prev) => ({ ...prev, description: value }))} />
           </Form.FormItem>
 
           {menuForm.type === 'menu' ? (
             <>
-              <Form.FormItem label="路由路径">
-                <Input value={menuForm.path} placeholder="例如 /articles" onChange={(value) => setMenuForm((prev) => ({ ...prev, path: value }))} />
+              <Form.FormItem label="路由路径" name="path">
+                <Input value={menuForm.path} placeholder="例如 /articles" onChange={(value) => updateMenuForm((prev) => ({ ...prev, path: value }))} />
               </Form.FormItem>
-              <Form.FormItem label="组件路径">
-                <Input value={menuForm.component} placeholder="例如 /pages/articles" onChange={(value) => setMenuForm((prev) => ({ ...prev, component: value }))} />
+              <Form.FormItem label="组件路径" name="component">
+                <Input value={menuForm.component} placeholder="例如 /pages/articles" onChange={(value) => updateMenuForm((prev) => ({ ...prev, component: value }))} />
               </Form.FormItem>
-              <Form.FormItem label="图标标识">
-                <Input value={menuForm.icon} placeholder="可选" onChange={(value) => setMenuForm((prev) => ({ ...prev, icon: value }))} />
+              <Form.FormItem label="图标标识" name="icon">
+                <Input value={menuForm.icon} placeholder="可选" onChange={(value) => updateMenuForm((prev) => ({ ...prev, icon: value }))} />
               </Form.FormItem>
             </>
           ) : (
             <>
-              <Form.FormItem label="API 路径" className="full-width" help="按钮权限在后端鉴权时可映射到该接口路径。">
-                <Input value={menuForm.apiPath} placeholder="例如 /v1/articles" onChange={(value) => setMenuForm((prev) => ({ ...prev, apiPath: value }))} />
+              <Form.FormItem label="API 路径" name="apiPath" className="full-width" help="按钮权限在后端鉴权时可映射到该接口路径。">
+                <Input value={menuForm.apiPath} placeholder="例如 /v1/articles" onChange={(value) => updateMenuForm((prev) => ({ ...prev, apiPath: value }))} />
               </Form.FormItem>
-              <Form.FormItem label="HTTP 方法">
-                <Select value={menuForm.httpMethod} options={httpMethodOptions} onChange={(value) => setMenuForm((prev) => ({ ...prev, httpMethod: String(value) }))} />
+              <Form.FormItem label="HTTP 方法" name="httpMethod">
+                <Select value={menuForm.httpMethod} options={httpMethodOptions} onChange={(value) => updateMenuForm((prev) => ({ ...prev, httpMethod: String(value) }))} />
               </Form.FormItem>
             </>
           )}
-        </Form>
+          {editingMenu ? (
+            <Form.FormItem
+              label="启用状态"
+              name="enabled"
+              initialData={menuForm.enabled ? 'enabled' : 'disabled'}
+            >
+              <Select
+                value={menuForm.enabled ? 'enabled' : 'disabled'}
+                options={statusOptions}
+                onChange={(value) => updateMenuForm((prev) => ({ ...prev, enabled: value === 'enabled' }))}
+              />
+            </Form.FormItem>
+          ) : null}
+          </Form>
+        </Drawer>
+      ) : null}
+
+      <Dialog
+        visible={Boolean(deleteTarget)}
+        header="删除权限节点"
+        width={460}
+        confirmBtn={{ content: '确认删除', theme: 'danger', loading: deleting }}
+        cancelBtn="取消"
+        confirmLoading={deleting}
+        onConfirm={() => void confirmDelete()}
+        onCancel={() => { if (!deleting) setDeleteTarget(null); }}
+        onClose={() => { if (!deleting) setDeleteTarget(null); }}
+        destroyOnClose
+      >
+        <p className="permission-delete-warning">
+          确认删除 <strong>{deleteTarget?.name || deleteTarget?.code || ''}</strong>？如果该节点有子节点，删除可能会被服务端拒绝。
+        </p>
       </Dialog>
     </div>
   );

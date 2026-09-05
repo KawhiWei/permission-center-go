@@ -11,10 +11,7 @@ import (
 	"github.com/luck/permission-center-go/internal/data/db/model"
 )
 
-// UserRoleRepository manages subject-to-role assignments. The application is
-// intentionally resolved through roles.user application, because user_roles
-// has one canonical row per subject/role pair and must not duplicate scope
-// data that can drift.
+// UserRoleRepository 管理用户与角色的关系；服务资源作用域由角色表统一提供。
 type UserRoleRepository struct {
 	pool *pgxpool.Pool
 }
@@ -25,10 +22,9 @@ func NewUserRoleRepository(pool *pgxpool.Pool) *UserRoleRepository {
 	return &UserRoleRepository{pool: pool}
 }
 
-// ListRoleIDs returns active, non-deleted role IDs assigned to subject in one
-// service resource. Assignments to disabled/deleted roles are hidden from callers.
-func (r *UserRoleRepository) ListRoleIDs(ctx context.Context, subject, application string) ([]string, error) {
-	subject, application, err := normalizeUserRoleScope(subject, application)
+// ListRoleIDs 查询用户在指定服务资源下拥有的有效角色 ID。
+func (r *UserRoleRepository) ListRoleIDs(ctx context.Context, subject, serviceResource string) ([]string, error) {
+	subject, serviceResource, err := normalizeUserRoleScope(subject, serviceResource)
 	if err != nil {
 		return nil, err
 	}
@@ -42,7 +38,7 @@ func (r *UserRoleRepository) ListRoleIDs(ctx context.Context, subject, applicati
 		  AND ro.is_deleted = FALSE
 		  AND ro.enabled = TRUE
 		ORDER BY ro.name, ro.id`
-	rows, err := r.pool.Query(ctx, query, subject, application)
+	rows, err := r.pool.Query(ctx, query, subject, serviceResource)
 	if err != nil {
 		return nil, mapDBError(err)
 	}
@@ -61,18 +57,14 @@ func (r *UserRoleRepository) ListRoleIDs(ctx context.Context, subject, applicati
 	return roleIDs, nil
 }
 
-// RoleIDs is a concise alias for ListRoleIDs for callers that already scope
-// the repository operation by subject and application.
-func (r *UserRoleRepository) RoleIDs(ctx context.Context, subject, application string) ([]string, error) {
-	return r.ListRoleIDs(ctx, subject, application)
+// RoleIDs 查询用户在指定服务资源下拥有的有效角色 ID。
+func (r *UserRoleRepository) RoleIDs(ctx context.Context, subject, serviceResource string) ([]string, error) {
+	return r.ListRoleIDs(ctx, subject, serviceResource)
 }
 
-// Replace atomically replaces assignments for subject within one application.
-// Existing assignments in other applications are preserved. Every requested
-// role is locked and checked before any delete occurs, so a bad role ID cannot
-// leave a partially replaced assignment set.
-func (r *UserRoleRepository) Replace(ctx context.Context, subject, application string, roleIDs []string) error {
-	subject, application, err := normalizeUserRoleScope(subject, application)
+// Replace 在事务中替换用户在指定服务资源下的全部角色，并保留其他服务资源的角色。
+func (r *UserRoleRepository) Replace(ctx context.Context, subject, serviceResource string, roleIDs []string) error {
+	subject, serviceResource, err := normalizeUserRoleScope(subject, serviceResource)
 	if err != nil {
 		return err
 	}
@@ -98,17 +90,17 @@ func (r *UserRoleRepository) Replace(ctx context.Context, subject, application s
 				  AND service_resource = $2
 			  AND is_deleted = FALSE
 			  AND enabled = TRUE
-			FOR SHARE`, roleID, application).Scan(&storedID)
+			FOR SHARE`, roleID, serviceResource).Scan(&storedID)
 		if err != nil {
 			if err == pgx.ErrNoRows {
-				return fmt.Errorf("%w: role %q does not exist, is disabled, deleted, or belongs to another application", biz.ErrConflict, roleID)
+				return fmt.Errorf("%w: role %q does not exist, is disabled, deleted, or belongs to another service resource", biz.ErrConflict, roleID)
 			}
 			return mapDBError(err)
 		}
 	}
 
 	// Do not delete by subject alone: a subject may have independent role
-	// assignments in another application.
+	// assignments in another service resource.
 	if _, err := tx.Exec(ctx, `
 		UPDATE user_roles ur
 		SET is_deleted = TRUE,
@@ -119,7 +111,7 @@ func (r *UserRoleRepository) Replace(ctx context.Context, subject, application s
 		WHERE ur.role_id = ro.id
 		  AND ur.subject = $1
 		  AND ro.service_resource = $2
-		  AND ur.is_deleted = FALSE`, subject, application, actor.ID, actor.Name); err != nil {
+		  AND ur.is_deleted = FALSE`, subject, serviceResource, actor.ID, actor.Name); err != nil {
 		return mapDBError(err)
 	}
 	for _, roleID := range roleIDs {
@@ -143,22 +135,24 @@ func (r *UserRoleRepository) Replace(ctx context.Context, subject, application s
 	return nil
 }
 
-// ReplaceRoles is the descriptive alias used by service layers.
-func (r *UserRoleRepository) ReplaceRoles(ctx context.Context, subject, application string, roleIDs []string) error {
-	return r.Replace(ctx, subject, application, roleIDs)
+// ReplaceRoles 提供给业务层使用的角色全量替换入口。
+func (r *UserRoleRepository) ReplaceRoles(ctx context.Context, subject, serviceResource string, roleIDs []string) error {
+	return r.Replace(ctx, subject, serviceResource, roleIDs)
 }
 
-func normalizeUserRoleScope(subject, application string) (string, string, error) {
-	subject, application = strings.TrimSpace(subject), strings.TrimSpace(application)
+// normalizeUserRoleScope 清理并校验用户及服务资源作用域。
+func normalizeUserRoleScope(subject, serviceResource string) (string, string, error) {
+	subject, serviceResource = strings.TrimSpace(subject), strings.TrimSpace(serviceResource)
 	if subject == "" || len(subject) > 80 {
 		return "", "", fmt.Errorf("%w: subject must be 1-80 characters", biz.ErrInvalidArgument)
 	}
-	if application == "" || len([]rune(application)) > 128 {
+	if serviceResource == "" || len([]rune(serviceResource)) > 128 {
 		return "", "", fmt.Errorf("%w: service_resource must be 1-128 characters", biz.ErrInvalidArgument)
 	}
-	return subject, application, nil
+	return subject, serviceResource, nil
 }
 
+// normalizeRoleIDs 清理并校验角色 ID 列表，同时拒绝重复值。
 func normalizeRoleIDs(roleIDs []string) ([]string, error) {
 	if len(roleIDs) == 0 {
 		return nil, nil

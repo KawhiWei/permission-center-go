@@ -9,13 +9,11 @@ const (
 	MenuTypeButton MenuType = "button"
 )
 
-// Menu is a node in an application's menu/button tree. A nil ParentID
-// denotes a root menu; button roots are rejected by the database constraint.
+// Menu 是服务资源菜单树中的菜单或按钮节点。
 type Menu struct {
 	BaseFields
 	ID              uuid.UUID
 	ServiceResource string
-	Application     string
 	ParentID        *uuid.UUID
 	Code            string
 	Name            string

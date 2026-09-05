@@ -4,21 +4,37 @@ const SERVICE_RESOURCE_STORAGE_KEY = 'permission-center-service-resource';
 const LAYOUT_TABS_STORAGE_KEY = 'permission-center-layout-tabs';
 const FIRST_SERVICE_RESOURCE = {
   id: 'service-resource-content',
-  name: 'content-platform',
+  key: 'content-platform',
+  name: 'legacy-content-platform',
   display_name: '内容平台',
   audience: 'permission.center.api',
   description: '端到端测试服务资源一',
   is_active: true,
+  source: 'local' as const,
   created_at: '2026-01-01T00:00:00Z',
 };
 const SECOND_SERVICE_RESOURCE = {
   id: 'service-resource-analytics',
-  name: 'analytics-platform',
+  key: 'analytics-platform',
+  name: 'legacy-analytics-platform',
   display_name: '数据平台',
   audience: 'permission.center.analytics',
   description: '端到端测试服务资源二',
   is_active: true,
+  source: 'nexusauth' as const,
   created_at: '2026-01-02T00:00:00Z',
+};
+
+type ServiceResourceRecord = {
+  id: string;
+  key: string;
+  name: string;
+  display_name: string;
+  audience: string;
+  description: string;
+  is_active: boolean;
+  source: 'local' | 'nexusauth';
+  created_at: string;
 };
 
 type RoleRecord = {
@@ -30,53 +46,61 @@ type RoleRecord = {
   enabled: boolean;
 };
 
-type ResourceRecord = {
+type MenuRecord = {
   id: string;
   service_resource: string;
+  parent_id: string | null;
   code: string;
-  resource_type: string;
   name: string;
   description: string;
-  matcher: string;
+  type: 'menu' | 'button';
+  path: string;
+  component: string;
+  api_path: string;
+  http_method: string;
+  icon: string;
+  sort: number;
   enabled: boolean;
+  children?: MenuRecord[];
 };
 
-type ActionRecord = {
+type EndpointRecord = {
   id: string;
   service_resource: string;
-  code: string;
-  name: string;
-  description: string;
+  controller: string;
+  method: string;
+  path_template: string;
+  summary: string;
   enabled: boolean;
+  created_at: string;
+  updated_at: string;
 };
 
-type PolicyRecord = {
-  id: string;
-  service_resource: string;
-  code: string;
-  name: string;
-  description: string;
-  effect: 'allow' | 'deny';
-  priority: number;
-  resource_codes: string[];
-  action_codes: string[];
-  enabled: boolean;
+type RoleRequest = {
+  method: string;
+  path: string;
+  payload?: Record<string, unknown>;
 };
 
 type PermissionMockState = {
   authenticated: boolean;
+  catalogSource: 'local' | 'nexusauth';
+  serviceResources: ServiceResourceRecord[];
   rolesByServiceResource: Record<string, RoleRecord[]>;
+  menusByServiceResource: Record<string, MenuRecord[]>;
+  endpointsByServiceResource: Record<string, EndpointRecord[]>;
+  roleMenuIDs: Record<string, string[]>;
   userRoleIDs: string[];
   roleRequests: string[];
+  roleMutationRequests: RoleRequest[];
+  menuRequests: RoleRequest[];
+  serviceResourceMutationRequests: RoleRequest[];
+  endpointRequests: RoleRequest[];
+  swaggerImportRequests: RoleRequest[];
+  roleMenuRequests: RoleRequest[];
   userRoleRequests: string[];
   userRoleReads: number;
   serviceResourceRequests: number;
-  resourcesByServiceResource: Record<string, ResourceRecord[]>;
-  actionsByServiceResource: Record<string, ActionRecord[]>;
-  endpointsByServiceResource: Record<string, Record<string, unknown>[]>;
-  policiesByServiceResource: Record<string, PolicyRecord[]>;
-  bindingsByPolicy: Record<string, Record<string, unknown>[]>;
-  decisionRequests: Record<string, unknown>[];
 };
 
 const makeRole = (
@@ -94,36 +118,92 @@ const makeRole = (
   enabled: true,
 });
 
-const makeResource = (
+const makeMenu = (
   serviceResource: string,
   id: string,
   code: string,
   name: string,
-  resourceType = 'entity',
-): ResourceRecord => ({
+  type: 'menu' | 'button' = 'menu',
+  parentID: string | null = null,
+  fields: Partial<MenuRecord> = {},
+): MenuRecord => ({
   id,
   service_resource: serviceResource,
+  parent_id: parentID,
   code,
-  resource_type: resourceType,
   name,
   description: '',
-  matcher: '',
+  type,
+  path: type === 'menu' ? `/${code}` : '',
+  component: type === 'menu' ? `/pages/${code}` : '',
+  api_path: type === 'button' ? `/v1/${code}` : '',
+  http_method: type === 'button' ? 'POST' : '',
+  icon: type === 'menu' ? 'menu' : '',
+  sort: 0,
   enabled: true,
+  ...fields,
 });
 
-const makeAction = (
+const makeNavigationMenus = (serviceResource: string): MenuRecord[] => [
+  makeMenu(serviceResource, `${serviceResource}-permission-center`, 'permission-center', '权限中心', 'menu', null, {
+    path: '/permission-center', component: '', icon: 'lock', sort: 10,
+  }),
+  makeMenu(serviceResource, `${serviceResource}-roles`, 'role-management', '角色管理', 'menu', `${serviceResource}-permission-center`, {
+    path: '/roles', component: '/permission-center/role-management/index.tsx', icon: 'usergroup', sort: 10,
+  }),
+  makeMenu(serviceResource, `${serviceResource}-menus`, 'menu-management', '菜单与按钮管理', 'menu', `${serviceResource}-permission-center`, {
+    path: '/menus', component: '/permission-center/menu-management/index.tsx', icon: 'menu', sort: 20,
+  }),
+  makeMenu(serviceResource, `${serviceResource}-user-roles`, 'user-role-management', '用户角色绑定', 'menu', `${serviceResource}-permission-center`, {
+    path: '/user-roles', component: '/permission-center/user-role-management/index.tsx', icon: 'user', sort: 30,
+  }),
+  makeMenu(serviceResource, `${serviceResource}-basic-data`, 'basic-data', '基础数据', 'menu', null, {
+    path: '/basic-data', component: '', icon: 'cloud', sort: 20,
+  }),
+  makeMenu(serviceResource, `${serviceResource}-service-resources`, 'service-resource-management', '服务资源管理', 'menu', `${serviceResource}-basic-data`, {
+    path: '/service-resources', component: '/permission-center/service-resource-management/index.tsx', icon: 'cloud', sort: 10,
+  }),
+  makeMenu(serviceResource, `${serviceResource}-api-endpoints`, 'api-endpoint-management', 'API 端点管理', 'menu', `${serviceResource}-basic-data`, {
+    path: '/api-endpoints', component: '/permission-center/api-endpoint-management/index.tsx', icon: 'api', sort: 20,
+  }),
+];
+
+const makeEndpoint = (
   serviceResource: string,
   id: string,
-  code: string,
-  name: string,
-): ActionRecord => ({
+  controller: string,
+  method: string,
+  pathTemplate: string,
+  summary: string,
+  fields: Partial<EndpointRecord> = {},
+): EndpointRecord => ({
   id,
   service_resource: serviceResource,
-  code,
-  name,
-  description: '',
+  controller,
+  method,
+  path_template: pathTemplate,
+  summary,
   enabled: true,
+  created_at: '2026-01-03T00:00:00Z',
+  updated_at: '2026-01-03T00:00:00Z',
+  ...fields,
 });
+
+const buildMenuTree = (items: MenuRecord[]): MenuRecord[] => {
+  const nodes = new Map<string, MenuRecord>(items.map((item): [string, MenuRecord] => [item.id, { ...item, children: [] }]));
+  const roots: MenuRecord[] = [];
+  nodes.forEach((node) => {
+    if (node.parent_id) {
+      const parent = nodes.get(node.parent_id);
+      if (parent) {
+        parent.children = [...(parent.children || []), node];
+        return;
+      }
+    }
+    roots.push(node);
+  });
+  return roots;
+};
 
 const jsonResult = (result: unknown) => ({
   success: true,
@@ -140,46 +220,65 @@ const fulfillJSON = async (route: Route, body: unknown, status = 200) => {
   });
 };
 
-const getServiceResourceRecords = () => [FIRST_SERVICE_RESOURCE, SECOND_SERVICE_RESOURCE];
+const getServiceResourceRecords = (): ServiceResourceRecord[] => [
+  { ...FIRST_SERVICE_RESOURCE },
+  { ...SECOND_SERVICE_RESOURCE },
+];
 
 const installAPIMocks = async (page: Page): Promise<PermissionMockState> => {
   const state: PermissionMockState = {
     authenticated: true,
+    catalogSource: 'local',
+    serviceResources: getServiceResourceRecords(),
     rolesByServiceResource: {
-      [FIRST_SERVICE_RESOURCE.name]: [
-        makeRole(FIRST_SERVICE_RESOURCE.name, 'role-editor', 'content-editor', '内容编辑'),
+      [FIRST_SERVICE_RESOURCE.key]: [
+        makeRole(FIRST_SERVICE_RESOURCE.key, 'role-editor', 'content-editor', '内容编辑'),
+        makeRole(FIRST_SERVICE_RESOURCE.key, 'role-reviewer', 'content-reviewer', '内容审核'),
       ],
-      [SECOND_SERVICE_RESOURCE.name]: [
-        makeRole(SECOND_SERVICE_RESOURCE.name, 'role-analyst', 'data-analyst', '数据分析'),
+      [SECOND_SERVICE_RESOURCE.key]: [
+        makeRole(SECOND_SERVICE_RESOURCE.key, 'role-analyst', 'data-analyst', '数据分析'),
       ],
+    },
+    menusByServiceResource: {
+      [FIRST_SERVICE_RESOURCE.key]: [
+        ...makeNavigationMenus(FIRST_SERVICE_RESOURCE.key),
+        makeMenu(FIRST_SERVICE_RESOURCE.key, 'menu-posts', 'posts', '帖子管理', 'menu', null, {
+          description: '内容菜单',
+          path: '/posts',
+          component: '/pages/posts',
+          sort: 1,
+        }),
+        makeMenu(FIRST_SERVICE_RESOURCE.key, 'menu-post-create', 'post-create', '创建帖子', 'button', 'menu-posts', {
+          description: '创建帖子按钮',
+          api_path: '/v1/posts',
+          http_method: 'POST',
+          sort: 2,
+        }),
+      ],
+      [SECOND_SERVICE_RESOURCE.key]: makeNavigationMenus(SECOND_SERVICE_RESOURCE.key),
+    },
+    endpointsByServiceResource: {
+      [FIRST_SERVICE_RESOURCE.key]: [
+        makeEndpoint(FIRST_SERVICE_RESOURCE.key, 'endpoint-post-list', 'PostController', 'GET', '/v1/posts', '查询帖子'),
+      ],
+      [SECOND_SERVICE_RESOURCE.key]: [],
+    },
+    roleMenuIDs: {
+      'role-editor': ['menu-posts'],
+      'role-reviewer': [],
+      'role-analyst': [],
     },
     userRoleIDs: [],
     roleRequests: [],
+    roleMutationRequests: [],
+    menuRequests: [],
+    serviceResourceMutationRequests: [],
+    endpointRequests: [],
+    swaggerImportRequests: [],
+    roleMenuRequests: [],
     userRoleRequests: [],
     userRoleReads: 0,
     serviceResourceRequests: 0,
-    resourcesByServiceResource: {
-      [FIRST_SERVICE_RESOURCE.name]: [
-        makeResource(FIRST_SERVICE_RESOURCE.name, 'resource-post', 'post', '帖子'),
-      ],
-      [SECOND_SERVICE_RESOURCE.name]: [],
-    },
-    actionsByServiceResource: {
-      [FIRST_SERVICE_RESOURCE.name]: [
-        makeAction(FIRST_SERVICE_RESOURCE.name, 'action-update', 'update', '编辑'),
-      ],
-      [SECOND_SERVICE_RESOURCE.name]: [],
-    },
-    endpointsByServiceResource: {
-      [FIRST_SERVICE_RESOURCE.name]: [],
-      [SECOND_SERVICE_RESOURCE.name]: [],
-    },
-    policiesByServiceResource: {
-      [FIRST_SERVICE_RESOURCE.name]: [],
-      [SECOND_SERVICE_RESOURCE.name]: [],
-    },
-    bindingsByPolicy: {},
-    decisionRequests: [],
   };
 
   await page.route('**/api/auth/me', async (route) => {
@@ -208,7 +307,54 @@ const installAPIMocks = async (page: Page): Promise<PermissionMockState> => {
     const url = new URL(request.url());
     if (request.method() === 'GET' && url.pathname === '/api/v1/service-resources') {
       state.serviceResourceRequests += 1;
-      await fulfillJSON(route, jsonResult({ items: getServiceResourceRecords() }));
+      await fulfillJSON(route, jsonResult({ items: state.serviceResources, source: state.catalogSource }));
+      return;
+    }
+
+    if (request.method() === 'POST' && url.pathname === '/api/v1/service-resources') {
+      const payload = request.postDataJSON() as Record<string, unknown>;
+      const key = String(payload.key || '');
+      const resource: ServiceResourceRecord = {
+        id: `service-resource-${state.serviceResources.length + 1}`,
+        key,
+        name: key,
+        display_name: String(payload.display_name || ''),
+        audience: String(payload.audience || ''),
+        description: String(payload.description || ''),
+        is_active: payload.is_active !== false,
+        source: 'local',
+        created_at: '2026-01-04T00:00:00Z',
+      };
+      state.serviceResources = [...state.serviceResources, resource];
+      state.serviceResourceMutationRequests.push({ method: 'POST', path: url.pathname, payload });
+      await fulfillJSON(route, jsonResult(resource), 201);
+      return;
+    }
+
+    const resourceMatch = url.pathname.match(/^\/api\/v1\/service-resources\/([^/]+)$/);
+    if (resourceMatch && (request.method() === 'PUT' || request.method() === 'DELETE')) {
+      const resourceKey = decodeURIComponent(resourceMatch[1]);
+      const resource = state.serviceResources.find((item) => item.key === resourceKey);
+      const payload = request.method() === 'PUT' ? request.postDataJSON() as Record<string, unknown> : undefined;
+      state.serviceResourceMutationRequests.push({ method: request.method(), path: url.pathname, payload });
+      if (!resource || resource.source !== 'local') {
+        await fulfillJSON(route, jsonResult(null), 403);
+        return;
+      }
+      if (request.method() === 'DELETE') {
+        state.serviceResources = state.serviceResources.filter((item) => item.key !== resourceKey);
+        await fulfillJSON(route, jsonResult(null));
+        return;
+      }
+      const nextResource: ServiceResourceRecord = {
+        ...resource,
+        display_name: String(payload?.display_name ?? resource.display_name),
+        audience: String(payload?.audience ?? resource.audience),
+        description: String(payload?.description ?? resource.description),
+        is_active: payload?.is_active !== undefined ? payload.is_active === true : resource.is_active,
+      };
+      state.serviceResources = state.serviceResources.map((item) => item.key === resourceKey ? nextResource : item);
+      await fulfillJSON(route, jsonResult(nextResource));
       return;
     }
 
@@ -218,15 +364,36 @@ const installAPIMocks = async (page: Page): Promise<PermissionMockState> => {
   await page.route('**/api/v1/roles**', async (route) => {
     const request = route.request();
     const url = new URL(request.url());
+    const path = url.pathname;
     const serviceResource = url.searchParams.get('service_resource') || '';
 
-    if (request.method() === 'GET' && url.pathname === '/api/v1/roles') {
+    const roleMenuMatch = path.match(/^\/api\/v1\/roles\/([^/]+)\/menus$/);
+    if (roleMenuMatch && (request.method() === 'GET' || request.method() === 'PUT')) {
+      const roleID = roleMenuMatch[1];
+      state.roleMenuRequests.push({
+        method: request.method(),
+        path,
+        payload: request.method() === 'PUT' ? request.postDataJSON() as Record<string, unknown> : undefined,
+      });
+      if (request.method() === 'GET') {
+        await fulfillJSON(route, jsonResult({ menu_ids: state.roleMenuIDs[roleID] || [] }));
+        return;
+      }
+      const payload = request.postDataJSON() as { menu_ids?: unknown };
+      state.roleMenuIDs[roleID] = Array.isArray(payload.menu_ids)
+        ? payload.menu_ids.filter((menuID): menuID is string => typeof menuID === 'string')
+        : [];
+      await fulfillJSON(route, jsonResult(null));
+      return;
+    }
+
+    if (request.method() === 'GET' && path === '/api/v1/roles') {
       state.roleRequests.push(serviceResource);
       await fulfillJSON(route, jsonResult({ items: state.rolesByServiceResource[serviceResource] || [] }));
       return;
     }
 
-    if (request.method() === 'POST' && url.pathname === '/api/v1/roles') {
+    if (request.method() === 'POST' && path === '/api/v1/roles') {
       const payload = request.postDataJSON() as {
         service_resource?: string;
         code?: string;
@@ -242,7 +409,39 @@ const installAPIMocks = async (page: Page): Promise<PermissionMockState> => {
         payload.description || '',
       );
       state.rolesByServiceResource[role.service_resource] = [...serviceResourceRoles, role];
+      state.roleMutationRequests.push({ method: 'POST', path, payload });
       await fulfillJSON(route, jsonResult(role));
+      return;
+    }
+
+    const roleMatch = path.match(/^\/api\/v1\/roles\/([^/]+)$/);
+    if (roleMatch && (request.method() === 'PUT' || request.method() === 'DELETE')) {
+      const roleID = roleMatch[1];
+      const resourceName = Object.keys(state.rolesByServiceResource).find((name) => (
+        state.rolesByServiceResource[name].some((role) => role.id === roleID)
+      ));
+      const currentRoles = resourceName ? state.rolesByServiceResource[resourceName] : [];
+      const payload = request.method() === 'PUT' ? request.postDataJSON() as Record<string, unknown> : undefined;
+      state.roleMutationRequests.push({ method: request.method(), path, payload });
+      if (request.method() === 'DELETE') {
+        if (resourceName) {
+          state.rolesByServiceResource[resourceName] = currentRoles.filter((role) => role.id !== roleID);
+        }
+        delete state.roleMenuIDs[roleID];
+        await fulfillJSON(route, jsonResult(null));
+        return;
+      }
+      const nextRoles = currentRoles.map((role) => role.id === roleID ? {
+        ...role,
+        code: String(payload?.code ?? role.code),
+        name: String(payload?.name ?? role.name),
+        description: String(payload?.description ?? role.description),
+        enabled: payload?.enabled !== undefined ? payload.enabled === true : role.enabled,
+      } : role);
+      if (resourceName) {
+        state.rolesByServiceResource[resourceName] = nextRoles;
+      }
+      await fulfillJSON(route, jsonResult(nextRoles.find((role) => role.id === roleID) || null));
       return;
     }
 
@@ -277,158 +476,183 @@ const installAPIMocks = async (page: Page): Promise<PermissionMockState> => {
     await fulfillJSON(route, jsonResult(null), 404);
   });
 
-  await page.route('**/api/v1/authorization/**', async (route) => {
+  await page.route('**/api/v1/authorization/api-endpoints**', async (route) => {
     const request = route.request();
     const url = new URL(request.url());
     const path = url.pathname;
-    const serviceResource = url.searchParams.get('service_resource') || FIRST_SERVICE_RESOURCE.name;
-    const collectionMatch = path.match(/^\/api\/v1\/authorization\/(resources|actions|api-endpoints|policies)$/);
-    const itemMatch = path.match(/^\/api\/v1\/authorization\/(resources|actions|api-endpoints|policies)\/([^/]+)$/);
-    const bindingMatch = path.match(/^\/api\/v1\/authorization\/policies\/([^/]+)\/bindings$/);
+    const serviceResource = url.searchParams.get('service_resource') || FIRST_SERVICE_RESOURCE.key;
 
-    if (collectionMatch && request.method() === 'GET') {
-      const collection = collectionMatch[1];
-      const items = collection === 'resources'
-        ? state.resourcesByServiceResource[serviceResource] || []
-        : collection === 'actions'
-          ? state.actionsByServiceResource[serviceResource] || []
-          : collection === 'api-endpoints'
-            ? state.endpointsByServiceResource[serviceResource] || []
-            : state.policiesByServiceResource[serviceResource] || [];
-      await fulfillJSON(route, jsonResult({ items }));
+    if (request.method() === 'GET' && path === '/api/v1/authorization/api-endpoints') {
+      await fulfillJSON(route, jsonResult({ items: state.endpointsByServiceResource[serviceResource] || [] }));
       return;
     }
 
-    if (collectionMatch && request.method() === 'POST') {
-      const collection = collectionMatch[1];
+    if (request.method() === 'POST' && path === '/api/v1/authorization/api-endpoints/import-swagger') {
       const payload = request.postDataJSON() as Record<string, unknown>;
-      const id = `${collection}-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-      if (collection === 'resources') {
-        const resource: ResourceRecord = {
-          id,
-          service_resource: String(payload.service_resource || serviceResource),
-          code: String(payload.code || ''),
-          resource_type: String(payload.resource_type || 'entity'),
-          name: String(payload.name || ''),
-          description: String(payload.description || ''),
-          matcher: String(payload.matcher || ''),
-          enabled: payload.enabled !== false,
-        };
-        state.resourcesByServiceResource[resource.service_resource] = [...(state.resourcesByServiceResource[resource.service_resource] || []), resource];
-        await fulfillJSON(route, jsonResult(resource), 201);
-        return;
-      }
-      if (collection === 'actions') {
-        const action: ActionRecord = {
-          id,
-          service_resource: String(payload.service_resource || serviceResource),
-          code: String(payload.code || ''),
-          name: String(payload.name || ''),
-          description: String(payload.description || ''),
-          enabled: payload.enabled !== false,
-        };
-        state.actionsByServiceResource[action.service_resource] = [...(state.actionsByServiceResource[action.service_resource] || []), action];
-        await fulfillJSON(route, jsonResult(action), 201);
-        return;
-      }
-      if (collection === 'api-endpoints') {
-        const endpoint = { id, service_resource: String(payload.service_resource || serviceResource), ...payload };
-        state.endpointsByServiceResource[String(endpoint.service_resource)] = [...(state.endpointsByServiceResource[String(endpoint.service_resource)] || []), endpoint];
-        await fulfillJSON(route, jsonResult(endpoint), 201);
-        return;
-      }
-      const policy: PolicyRecord = {
-        id,
-        service_resource: String(payload.service_resource || serviceResource),
-        code: String(payload.code || ''),
-        name: String(payload.name || ''),
-        description: String(payload.description || ''),
-        effect: payload.effect === 'deny' ? 'deny' : 'allow',
-        priority: Number(payload.priority || 0),
-        resource_codes: Array.isArray(payload.resource_codes) ? payload.resource_codes.filter((value): value is string => typeof value === 'string') : [],
-        action_codes: Array.isArray(payload.action_codes) ? payload.action_codes.filter((value): value is string => typeof value === 'string') : [],
-        enabled: payload.enabled !== false,
-      };
-      state.policiesByServiceResource[policy.service_resource] = [...(state.policiesByServiceResource[policy.service_resource] || []), policy];
-      await fulfillJSON(route, jsonResult(policy), 201);
+      state.swaggerImportRequests.push({ method: 'POST', path, payload });
+      const imported: EndpointRecord = makeEndpoint(
+        String(payload.service_resource || serviceResource),
+        `endpoint-imported-${state.swaggerImportRequests.length}`,
+        'SwaggerController',
+        'GET',
+        '/v1/imported',
+        'Swagger 导入接口',
+      );
+      const importedServiceResource = imported.service_resource;
+      state.endpointsByServiceResource[importedServiceResource] = [
+        ...(state.endpointsByServiceResource[importedServiceResource] || []),
+        imported,
+      ];
+      await fulfillJSON(route, jsonResult({ total: 1, created: 1, skipped: 0 }));
       return;
     }
 
-    if (itemMatch && request.method() === 'PUT') {
-      const collection = itemMatch[1];
-      const id = itemMatch[2];
+    if (request.method() === 'POST' && path === '/api/v1/authorization/api-endpoints') {
       const payload = request.postDataJSON() as Record<string, unknown>;
-      const collectionState = collection === 'resources'
-        ? state.resourcesByServiceResource[serviceResource] || []
-        : collection === 'actions'
-          ? state.actionsByServiceResource[serviceResource] || []
-          : collection === 'api-endpoints'
-            ? state.endpointsByServiceResource[serviceResource] || []
-            : state.policiesByServiceResource[serviceResource] || [];
-      const nextItems = collectionState.map((item) => item.id === id ? { ...item, ...payload } : item);
-      if (collection === 'resources') state.resourcesByServiceResource[serviceResource] = nextItems as ResourceRecord[];
-      if (collection === 'actions') state.actionsByServiceResource[serviceResource] = nextItems as ActionRecord[];
-      if (collection === 'api-endpoints') state.endpointsByServiceResource[serviceResource] = nextItems;
-      if (collection === 'policies') state.policiesByServiceResource[serviceResource] = nextItems as PolicyRecord[];
-      await fulfillJSON(route, jsonResult(nextItems.find((item) => item.id === id) || null));
+      const resourceName = String(payload.service_resource || serviceResource);
+      const endpoint: EndpointRecord = makeEndpoint(
+        resourceName,
+        `endpoint-created-${(state.endpointRequests.filter((item) => item.method === 'POST').length + 1)}`,
+        String(payload.controller || ''),
+        String(payload.method || 'GET'),
+        String(payload.path_template || ''),
+        String(payload.summary || ''),
+        { enabled: payload.enabled !== false },
+      );
+      state.endpointRequests.push({ method: 'POST', path, payload });
+      state.endpointsByServiceResource[resourceName] = [...(state.endpointsByServiceResource[resourceName] || []), endpoint];
+      await fulfillJSON(route, jsonResult(endpoint), 201);
       return;
     }
 
-    if (itemMatch && request.method() === 'DELETE') {
-      const collection = itemMatch[1];
-      const id = itemMatch[2];
-      if (collection === 'resources') state.resourcesByServiceResource[serviceResource] = (state.resourcesByServiceResource[serviceResource] || []).filter((item) => item.id !== id);
-      if (collection === 'actions') state.actionsByServiceResource[serviceResource] = (state.actionsByServiceResource[serviceResource] || []).filter((item) => item.id !== id);
-      if (collection === 'api-endpoints') state.endpointsByServiceResource[serviceResource] = (state.endpointsByServiceResource[serviceResource] || []).filter((item) => item.id !== id);
-      if (collection === 'policies') state.policiesByServiceResource[serviceResource] = (state.policiesByServiceResource[serviceResource] || []).filter((item) => item.id !== id);
-      await fulfillJSON(route, jsonResult(null));
+    const endpointMatch = path.match(/^\/api\/v1\/authorization\/api-endpoints\/([^/]+)$/);
+    if (endpointMatch && request.method() === 'GET') {
+      const endpointID = decodeURIComponent(endpointMatch[1]);
+      const endpoint = Object.values(state.endpointsByServiceResource)
+        .flat()
+        .find((item) => item.id === endpointID);
+      await fulfillJSON(route, jsonResult(endpoint || null), endpoint ? 200 : 404);
       return;
     }
 
-    if (bindingMatch) {
-      const policyID = bindingMatch[1];
-      if (request.method() === 'GET') {
-        await fulfillJSON(route, jsonResult({ items: state.bindingsByPolicy[policyID] || [] }));
+    if (endpointMatch && (request.method() === 'PUT' || request.method() === 'DELETE')) {
+      const endpointID = decodeURIComponent(endpointMatch[1]);
+      const resourceName = Object.keys(state.endpointsByServiceResource).find((name) => (
+        state.endpointsByServiceResource[name].some((item) => item.id === endpointID)
+      ));
+      const currentEndpoints = resourceName ? state.endpointsByServiceResource[resourceName] : [];
+      const payload = request.method() === 'PUT' ? request.postDataJSON() as Record<string, unknown> : undefined;
+      state.endpointRequests.push({ method: request.method(), path, payload });
+      if (!resourceName) {
+        await fulfillJSON(route, jsonResult(null), 404);
         return;
       }
-      if (request.method() === 'PUT') {
-        const payload = request.postDataJSON() as { bindings?: unknown };
-        state.bindingsByPolicy[policyID] = Array.isArray(payload.bindings) ? payload.bindings.filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === 'object') : [];
+      if (request.method() === 'DELETE') {
+        state.endpointsByServiceResource[resourceName] = currentEndpoints.filter((item) => item.id !== endpointID);
         await fulfillJSON(route, jsonResult(null));
         return;
       }
+      const nextEndpoints = currentEndpoints.map((item) => item.id === endpointID ? {
+        ...item,
+        controller: String(payload?.controller ?? item.controller),
+        method: String(payload?.method ?? item.method),
+        path_template: String(payload?.path_template ?? item.path_template),
+        summary: String(payload?.summary ?? item.summary),
+        enabled: payload?.enabled !== undefined ? payload.enabled === true : item.enabled,
+        updated_at: '2026-01-05T00:00:00Z',
+      } : item);
+      state.endpointsByServiceResource[resourceName] = nextEndpoints;
+      await fulfillJSON(route, jsonResult(nextEndpoints.find((item) => item.id === endpointID) || null));
+      return;
     }
 
     await fulfillJSON(route, jsonResult(null), 404);
   });
 
-  await page.route('**/api/v1/pdp/decisions', async (route) => {
+  await page.route('**/api/v1/menus**', async (route) => {
     const request = route.request();
-    if (request.method() !== 'POST') {
-      await fulfillJSON(route, jsonResult(null), 404);
+    const url = new URL(request.url());
+    const path = url.pathname;
+    const serviceResource = url.searchParams.get('service_resource') || FIRST_SERVICE_RESOURCE.key;
+
+    if (request.method() === 'GET' && path === '/api/v1/menus/tree') {
+      await fulfillJSON(route, jsonResult({ items: buildMenuTree(state.menusByServiceResource[serviceResource] || []) }));
       return;
     }
-    const payload = request.postDataJSON() as Record<string, unknown>;
-    state.decisionRequests.push(payload);
-    const allowed = payload.subject_id === 'allow-user' && payload.action === 'update';
-    await fulfillJSON(route, jsonResult({
-      allow: allowed,
-      reason_code: allowed ? 'ALLOW' : 'NO_MATCHING_POLICY',
-      matched_policy_ids: allowed ? ['policy-editor'] : [],
-    }));
-  });
 
-  // Dashboard and role authorization use this endpoint when a test navigates there.
-  await page.route('**/api/v1/menus/tree**', async (route) => {
-    await fulfillJSON(route, jsonResult({ items: [] }));
+    if (request.method() === 'POST' && path === '/api/v1/menus') {
+      const payload = request.postDataJSON() as Record<string, unknown>;
+      const resourceName = String(payload.service_resource || serviceResource);
+      const items = state.menusByServiceResource[resourceName] || [];
+      const id = `menu-created-${state.menuRequests.filter((item) => item.method === 'POST').length + 1}`;
+      const menu = makeMenu(
+        resourceName,
+        id,
+        String(payload.code || ''),
+        String(payload.name || ''),
+        payload.type === 'button' ? 'button' : 'menu',
+        typeof payload.parent_id === 'string' ? payload.parent_id : null,
+        {
+          description: String(payload.description || ''),
+          path: String(payload.path || ''),
+          component: String(payload.component || ''),
+          api_path: String(payload.api_path || ''),
+          http_method: String(payload.http_method || ''),
+          icon: String(payload.icon || ''),
+          sort: typeof payload.sort === 'number' ? payload.sort : 0,
+        },
+      );
+      state.menuRequests.push({ method: 'POST', path, payload });
+      state.menusByServiceResource[resourceName] = [...items, menu];
+      await fulfillJSON(route, jsonResult(menu), 201);
+      return;
+    }
+
+    const itemMatch = path.match(/^\/api\/v1\/menus\/([^/]+)$/);
+    if (itemMatch && (request.method() === 'PUT' || request.method() === 'DELETE')) {
+      const menuID = itemMatch[1];
+      const resourceName = Object.keys(state.menusByServiceResource).find((name) => (
+        state.menusByServiceResource[name].some((item) => item.id === menuID)
+      ));
+      const currentItems = resourceName ? state.menusByServiceResource[resourceName] : [];
+      const payload = request.method() === 'PUT' ? request.postDataJSON() as Record<string, unknown> : undefined;
+      state.menuRequests.push({ method: request.method(), path, payload });
+      if (request.method() === 'DELETE') {
+        if (resourceName) {
+          state.menusByServiceResource[resourceName] = currentItems.filter((item) => item.id !== menuID);
+        }
+        await fulfillJSON(route, jsonResult(null));
+        return;
+      }
+      const nextItems = currentItems.map((item) => item.id === menuID ? {
+        ...item,
+        code: String(payload?.code ?? item.code),
+        name: String(payload?.name ?? item.name),
+        description: String(payload?.description ?? item.description),
+        path: String(payload?.path ?? item.path),
+        component: String(payload?.component ?? item.component),
+        api_path: String(payload?.api_path ?? item.api_path),
+        http_method: String(payload?.http_method ?? item.http_method),
+        icon: String(payload?.icon ?? item.icon),
+        sort: typeof payload?.sort === 'number' ? payload.sort : item.sort,
+        enabled: payload?.enabled !== undefined ? payload.enabled === true : item.enabled,
+      } : item);
+      if (resourceName) {
+        state.menusByServiceResource[resourceName] = nextItems;
+      }
+      await fulfillJSON(route, jsonResult(nextItems.find((item) => item.id === menuID) || null));
+      return;
+    }
+
+    await fulfillJSON(route, jsonResult(null), 404);
   });
 
   return state;
 };
 
-const seedServiceResource = async (page: Page, serviceResource = FIRST_SERVICE_RESOURCE.name) => {
+const seedServiceResource = async (page: Page, serviceResource = FIRST_SERVICE_RESOURCE.key) => {
   await page.addInitScript(({ key, value }) => {
-    window.localStorage.setItem(key, value);
+    window.sessionStorage.setItem(key, value);
   }, { key: SERVICE_RESOURCE_STORAGE_KEY, value: serviceResource });
 };
 
@@ -438,8 +662,8 @@ test.describe('权限中心关键操作流程', () => {
     await page.goto('/roles');
 
     await expect(page).toHaveURL(/\/select-service-resource\?redirect=%2Froles$/);
-    await expect(page.getByRole('heading', { name: '选择服务资源' })).toBeVisible();
-    await expect(page.getByText('可用服务资源', { exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '选择允许访问的服务资源' })).toBeVisible();
+    await expect(page.getByText(FIRST_SERVICE_RESOURCE.display_name, { exact: true })).toBeVisible();
   });
 
   test('选择的服务资源会在刷新后保留，并显示在 Header 中', async ({ page }) => {
@@ -448,30 +672,67 @@ test.describe('权限中心关键操作流程', () => {
     await page.goto('/dashboard');
 
     const currentServiceResource = page.locator('.layout-current-service-resource-value');
-    await expect(currentServiceResource).toHaveText(FIRST_SERVICE_RESOURCE.name);
+    await expect(currentServiceResource).toHaveText(FIRST_SERVICE_RESOURCE.key);
 
     await page.reload();
 
     await expect(page).toHaveURL(/\/dashboard$/);
-    await expect(currentServiceResource).toHaveText(FIRST_SERVICE_RESOURCE.name);
+    await expect(currentServiceResource).toHaveText(FIRST_SERVICE_RESOURCE.key);
   });
 
-  test('服务资源选择页可以刷新列表并保持只读目录', async ({ page }) => {
+  test('后台动态路由在 API 端点页面硬刷新后仍可访问', async ({ page }) => {
+    await installAPIMocks(page);
+    await seedServiceResource(page);
+    await page.goto('/api-endpoints');
+
+    await expect(page.getByRole('heading', { name: 'API 端点管理', exact: true })).toBeVisible();
+    await expect(page.getByRole('complementary').getByText('API 端点管理', { exact: true })).toBeVisible();
+
+    await page.reload();
+
+    await expect(page).toHaveURL(/\/api-endpoints$/);
+    await expect(page.getByRole('heading', { name: 'API 端点管理', exact: true })).toBeVisible();
+    await expect(page.getByRole('complementary').getByText('API 端点管理', { exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '404', exact: true })).toHaveCount(0);
+  });
+
+  test('服务资源选择页展示可用目录并保持只读', async ({ page }) => {
     const state = await installAPIMocks(page);
     await page.goto('/select-service-resource');
 
-    await expect(page.getByRole('heading', { name: '选择服务资源' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: '选择允许访问的服务资源' })).toBeVisible();
     await expect(page.getByText(FIRST_SERVICE_RESOURCE.display_name, { exact: true })).toBeVisible();
-    await page.getByRole('button', { name: '刷新列表', exact: true }).click();
-    await expect.poll(() => state.serviceResourceRequests).toBeGreaterThan(1);
+    await expect(page.getByText('本地', { exact: true })).toBeVisible();
+    await expect(page.getByText('NexusAuth', { exact: true })).toBeVisible();
+    await expect.poll(() => state.serviceResourceRequests).toBeGreaterThan(0);
     await expect(page.getByRole('button', { name: '新建服务资源', exact: true })).toHaveCount(0);
+  });
+
+  test('侧栏固定展示仪表盘，并只渲染后台返回的启用菜单', async ({ page }) => {
+    const state = await installAPIMocks(page);
+    state.menusByServiceResource[FIRST_SERVICE_RESOURCE.key] = [
+      makeMenu(FIRST_SERVICE_RESOURCE.key, 'legacy-dashboard', 'dashboard', '后台仪表盘', 'menu', null, {
+        path: '/dashboard', component: '/permission-center/dashboard/index.tsx', enabled: true,
+      }),
+      makeMenu(FIRST_SERVICE_RESOURCE.key, 'disabled-menu', 'disabled', '停用菜单', 'menu', null, { enabled: false }),
+      makeMenu(FIRST_SERVICE_RESOURCE.key, 'button-node', 'create-item', '新增按钮', 'button'),
+    ];
+    await seedServiceResource(page);
+    await page.goto('/dashboard');
+
+    await expect(page.getByRole('heading', { name: '仪表盘', exact: true })).toBeVisible();
+    await expect(page.getByRole('complementary').getByText('仪表盘', { exact: true })).toHaveCount(1);
+    await expect(page.getByText('后台仪表盘', { exact: true })).toHaveCount(0);
+    await expect(page.getByText('角色管理', { exact: true })).toHaveCount(0);
+    await expect(page.getByText('停用菜单', { exact: true })).toHaveCount(0);
+    await expect(page.getByText('新增按钮', { exact: true })).toHaveCount(0);
   });
 
   test('退出登录会清空历史页签，重新登录后只保留仪表盘', async ({ page }) => {
     const state = await installAPIMocks(page);
     await seedServiceResource(page);
     await page.goto('/roles');
-    await page.goto('/authorization/resources');
+    await page.goto('/menus');
 
     await expect.poll(async () => page.evaluate((key) => {
       const tabs = JSON.parse(window.localStorage.getItem(key) || '[]') as unknown[];
@@ -506,14 +767,14 @@ test.describe('权限中心关键操作流程', () => {
     await page.getByRole('button', { name: '切换服务资源', exact: true }).click();
     await expect(page).toHaveURL(/\/select-service-resource\?redirect=%2Froles$/);
 
-    await page.locator('.permission-service-resource-option').filter({ hasText: SECOND_SERVICE_RESOURCE.display_name }).click();
-    await page.getByRole('button', { name: '进入权限中心', exact: true }).click();
+    await page.locator('.service-resource-card').filter({ hasText: SECOND_SERVICE_RESOURCE.display_name }).click();
+    await page.getByRole('button', { name: '继续并进入控制台', exact: true }).click();
 
     await expect(page).toHaveURL(/\/roles$/);
-    await expect(page.locator('.layout-current-service-resource-value')).toHaveText(SECOND_SERVICE_RESOURCE.name);
+    await expect(page.locator('.layout-current-service-resource-value')).toHaveText(SECOND_SERVICE_RESOURCE.key);
     await expect(page.getByText('数据分析', { exact: true })).toBeVisible();
     await expect(page.getByText('内容编辑', { exact: true })).not.toBeVisible();
-    expect(state.roleRequests).toContain(SECOND_SERVICE_RESOURCE.name);
+    expect(state.roleRequests).toContain(SECOND_SERVICE_RESOURCE.key);
   });
 
   test('创建角色成功后关闭弹窗、重置表单并刷新列表', async ({ page }) => {
@@ -530,13 +791,214 @@ test.describe('权限中心关键操作流程', () => {
     await dialog.getByRole('button', { name: '创建', exact: true }).click();
 
     await expect(dialog).toBeHidden();
-    await expect(page.getByText('新建角色', { exact: true })).toBeVisible();
+    await expect(page.getByRole('table').getByText('新建角色', { exact: true })).toBeVisible();
 
     await page.getByRole('button', { name: '新建角色', exact: true }).click();
     const freshDialog = page.locator('.t-dialog').filter({ hasText: '新建角色' });
     await expect(freshDialog.getByPlaceholder('例如 content-editor')).toHaveValue('');
     await expect(freshDialog.getByPlaceholder('例如 内容编辑')).toHaveValue('');
     await expect(freshDialog.getByPlaceholder('可选')).toHaveValue('');
+  });
+
+  test('编辑角色提交冻结字段并刷新列表', async ({ page }) => {
+    const state = await installAPIMocks(page);
+    await seedServiceResource(page);
+    await page.goto('/roles');
+
+    const roleRow = page.getByRole('row').filter({ hasText: '内容编辑' }).first();
+    await roleRow.getByRole('button', { name: '编辑', exact: true }).click();
+    const dialog = page.locator('.t-dialog').filter({ hasText: '编辑角色' });
+    await expect(dialog).toBeVisible();
+    await dialog.getByPlaceholder('例如 content-editor').fill('content-editor-updated');
+    await dialog.getByPlaceholder('例如 内容编辑').fill('内容编辑（更新）');
+    await dialog.getByPlaceholder('可选').fill('编辑后描述');
+    await dialog.locator('.t-select').click();
+    await page.locator('.t-select-option').filter({ hasText: '停用' }).click();
+
+    const updateRequest = page.waitForRequest((request) => (
+      request.method() === 'PUT'
+      && request.url().endsWith('/api/v1/roles/role-editor')
+    ));
+    await dialog.getByRole('button', { name: '保存', exact: true }).click();
+    await updateRequest;
+
+    const payload = state.roleMutationRequests.find((item) => item.method === 'PUT')?.payload;
+    expect(Object.keys(payload || {}).sort()).toEqual(['code', 'description', 'enabled', 'name']);
+    expect(payload).toEqual({
+      code: 'content-editor-updated',
+      name: '内容编辑（更新）',
+      description: '编辑后描述',
+      enabled: false,
+    });
+    await expect(page.getByText('内容编辑（更新）', { exact: true })).toBeVisible();
+    await expect(page.getByText('停用', { exact: true })).toBeVisible();
+  });
+
+  test('删除角色需要确认并刷新列表', async ({ page }) => {
+    const state = await installAPIMocks(page);
+    await seedServiceResource(page);
+    await page.goto('/roles');
+
+    const roleRow = page.getByRole('row').filter({ hasText: '内容审核' }).first();
+    await roleRow.getByRole('button', { name: '删除', exact: true }).click();
+    const dialog = page.locator('.t-dialog').filter({ hasText: '删除角色' });
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText('内容审核');
+
+    const deleteRequest = page.waitForRequest((request) => (
+      request.method() === 'DELETE'
+      && request.url().endsWith('/api/v1/roles/role-reviewer')
+    ));
+    await dialog.getByRole('button', { name: '确认删除', exact: true }).click();
+    await deleteRequest;
+
+    expect(state.roleMutationRequests.some((item) => item.method === 'DELETE')).toBe(true);
+    await expect(page.getByText('内容审核', { exact: true })).toHaveCount(0);
+  });
+
+  test('角色菜单授权会读取并替换菜单 ID', async ({ page }) => {
+    const state = await installAPIMocks(page);
+    await seedServiceResource(page);
+    await page.goto('/roles');
+
+    const roleRow = page.getByRole('row').filter({ hasText: '内容编辑' }).first();
+    await roleRow.getByRole('button', { name: '菜单授权', exact: true }).click();
+    const drawer = page.locator('.t-drawer');
+    await expect(drawer).toBeVisible();
+    await expect.poll(() => state.roleMenuRequests.filter((item) => item.method === 'GET').length).toBeGreaterThan(0);
+
+    const buttonItem = drawer.locator('.permission-grant-item').filter({ hasText: '创建帖子' });
+    await buttonItem.locator('.t-checkbox__input').click();
+    const replaceRequest = page.waitForRequest((request) => (
+      request.method() === 'PUT'
+      && request.url().endsWith('/api/v1/roles/role-editor/menus')
+    ));
+    await drawer.getByRole('button', { name: '保存授权', exact: true }).click();
+    await replaceRequest;
+
+    expect(state.roleMenuRequests.find((item) => item.method === 'PUT')?.payload).toEqual({
+      menu_ids: ['menu-posts', 'menu-post-create'],
+    });
+    expect(state.roleMenuIDs['role-editor']).toEqual(['menu-posts', 'menu-post-create']);
+  });
+
+  test('创建菜单提交服务资源和节点字段并刷新树', async ({ page }) => {
+    const state = await installAPIMocks(page);
+    await seedServiceResource(page);
+    await page.goto('/menus');
+
+    await expect(page.locator('.permission-tree-header').getByText('操作', { exact: true })).toBeVisible();
+    await page.getByRole('button', { name: '新建菜单', exact: true }).click();
+    const drawer = page.locator('.t-drawer').filter({ hasText: '新建菜单' });
+    await expect(drawer).toBeVisible();
+    await drawer.getByPlaceholder('例如 article-management').fill('article-management');
+    await drawer.getByPlaceholder('例如 文章管理').fill('文章管理');
+    await drawer.getByPlaceholder('例如 /articles').fill('/articles');
+    await drawer.getByPlaceholder('例如 /pages/articles').fill('/pages/articles');
+    const createRequest = page.waitForRequest((request) => (
+      request.method() === 'POST'
+      && request.url().endsWith('/api/v1/menus')
+    ));
+    await drawer.getByRole('button', { name: '创建', exact: true }).click();
+    await createRequest;
+
+    await expect(drawer).toBeHidden();
+    await expect(page.getByText('文章管理', { exact: true })).toBeVisible();
+    await expect(page.getByRole('complementary').getByText('文章管理', { exact: true })).toBeVisible();
+    const payload = state.menuRequests.find((item) => item.method === 'POST')?.payload;
+    expect(payload).toMatchObject({
+      service_resource: FIRST_SERVICE_RESOURCE.key,
+      code: 'article-management',
+      name: '文章管理',
+      type: 'menu',
+      parent_id: null,
+      path: '/articles',
+      component: '/pages/articles',
+    });
+
+    await page.getByRole('button', { name: '新建菜单', exact: true }).click();
+    const freshDrawer = page.locator('.t-drawer').filter({ hasText: '新建菜单' });
+    await expect(freshDrawer).toBeVisible();
+    await expect(freshDrawer.getByPlaceholder('例如 article-management')).toHaveValue('');
+    await expect(freshDrawer.getByPlaceholder('例如 文章管理')).toHaveValue('');
+    await expect(freshDrawer.getByPlaceholder('例如 /articles')).toHaveValue('');
+    await expect(freshDrawer.getByPlaceholder('例如 /pages/articles')).toHaveValue('');
+    await expect(freshDrawer.getByPlaceholder('0')).toHaveValue('0');
+  });
+
+  test('编辑菜单提交冻结字段并刷新树', async ({ page }) => {
+    const state = await installAPIMocks(page);
+    await seedServiceResource(page);
+    await page.goto('/menus');
+
+    const menuRow = page.locator('.permission-tree-row').filter({ has: page.getByText('帖子管理', { exact: true }) });
+    await menuRow.getByRole('button', { name: '编辑', exact: true }).click();
+    const drawer = page.locator('.t-drawer').filter({ hasText: '编辑菜单' });
+    await expect(drawer).toBeVisible();
+    await expect(drawer.getByPlaceholder('例如 article-management')).toHaveValue('posts');
+    await expect(drawer.getByPlaceholder('例如 文章管理')).toHaveValue('帖子管理');
+    await expect(drawer.getByPlaceholder('可选').first()).toHaveValue('内容菜单');
+    await expect(drawer.getByPlaceholder('例如 /articles')).toHaveValue('/posts');
+    await expect(drawer.getByPlaceholder('例如 /pages/articles')).toHaveValue('/pages/posts');
+    await expect(drawer.getByPlaceholder('0')).toHaveValue('1');
+    await drawer.getByPlaceholder('例如 article-management').fill('posts-updated');
+    await drawer.getByPlaceholder('例如 文章管理').fill('帖子中心');
+    await drawer.getByPlaceholder('例如 /articles').fill('/post-center');
+    await drawer.getByPlaceholder('例如 /pages/articles').fill('/pages/post-center');
+    await drawer.locator('.t-select').last().click();
+    await page.locator('.t-select-option').filter({ hasText: '停用' }).click();
+
+    const updateRequest = page.waitForRequest((request) => (
+      request.method() === 'PUT'
+      && request.url().endsWith('/api/v1/menus/menu-posts')
+    ));
+    await drawer.getByRole('button', { name: '保存', exact: true }).click();
+    await updateRequest;
+
+    const payload = state.menuRequests.find((item) => item.method === 'PUT')?.payload;
+    expect(Object.keys(payload || {}).sort()).toEqual([
+      'api_path',
+      'code',
+      'component',
+      'description',
+      'enabled',
+      'http_method',
+      'icon',
+      'name',
+      'path',
+      'sort',
+    ]);
+    expect(payload).toMatchObject({
+      code: 'posts-updated',
+      name: '帖子中心',
+      path: '/post-center',
+      component: '/pages/post-center',
+      enabled: false,
+    });
+    await expect(page.getByText('帖子中心', { exact: true })).toBeVisible();
+    await expect(page.getByText('停用', { exact: true })).toBeVisible();
+  });
+
+  test('删除菜单按钮需要确认并刷新树', async ({ page }) => {
+    const state = await installAPIMocks(page);
+    await seedServiceResource(page);
+    await page.goto('/menus');
+
+    const menuRow = page.locator('.permission-tree-row').filter({ has: page.getByText('创建帖子', { exact: true }) });
+    await menuRow.getByRole('button', { name: '删除', exact: true }).click();
+    const dialog = page.locator('.t-dialog').filter({ hasText: '删除权限节点' });
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toContainText('创建帖子');
+
+    const deleteRequest = page.waitForRequest((request) => (
+      request.method() === 'DELETE'
+      && request.url().endsWith('/api/v1/menus/menu-post-create')
+    ));
+    await dialog.getByRole('button', { name: '确认删除', exact: true }).click();
+    await deleteRequest;
+
+    expect(state.menuRequests.some((item) => item.method === 'DELETE')).toBe(true);
+    await expect(page.getByText('创建帖子', { exact: true })).toHaveCount(0);
   });
 
   test('用户角色绑定保存后会重新读取服务端角色数据', async ({ page }) => {
@@ -552,7 +1014,7 @@ test.describe('权限中心关键操作流程', () => {
     await roleOption.locator('.t-checkbox__input').click();
     const replaceRequest = page.waitForRequest((request) => (
       request.method() === 'PUT'
-      && request.url().includes('/api/v1/users/e2e-user/roles?service_resource=content-platform')
+      && request.url().includes(`/api/v1/users/e2e-user/roles?service_resource=${FIRST_SERVICE_RESOURCE.key}`)
     ));
     await page.getByRole('button', { name: '保存绑定', exact: true }).click();
     await replaceRequest;
@@ -565,79 +1027,166 @@ test.describe('权限中心关键操作流程', () => {
     await expect(roleOption.locator('.t-checkbox.t-is-checked')).toBeVisible();
   });
 
-  test('PDP 五类功能使用独立菜单和独立路由', async ({ page }) => {
-    await installAPIMocks(page);
-    await seedServiceResource(page);
-
-    const pages = [
-      ['/authorization/resources', '资源管理'],
-      ['/authorization/actions', '动作管理'],
-      ['/authorization/api-endpoints', 'API 端点管理'],
-      ['/authorization/policies', '策略管理'],
-      ['/authorization/simulator', '策略模拟'],
-    ] as const;
-
-    for (const [path, heading] of pages) {
-      await page.goto(path);
-      await expect(page).toHaveURL(new RegExp(`${path}$`));
-      await expect(page.getByRole('heading', { name: heading })).toBeVisible();
-      await expect(page.locator('.t-menu').getByText(heading, { exact: true })).toBeVisible();
-      await expect(page.locator('.permission-pdp-page').getByRole('tab')).toHaveCount(0);
-    }
-
-    await page.goto('/pdp');
-    await expect(page).toHaveURL(/\/authorization\/resources$/);
-  });
-
-  test('PDP 创建资源成功后关闭弹窗、重置表单并刷新列表', async ({ page }) => {
-    await installAPIMocks(page);
-    await seedServiceResource(page);
-    await page.goto('/authorization/resources');
-
-    await expect(page).toHaveURL(/\/authorization\/resources$/);
-    await expect(page.getByRole('heading', { name: '资源管理' })).toBeVisible();
-    await expect(page.getByRole('complementary').getByText('资源管理', { exact: true })).toBeVisible();
-    await page.goto('/pdp');
-    await expect(page).toHaveURL(/\/authorization\/resources$/);
-    await expect(page.getByText('帖子', { exact: true })).toBeVisible();
-    await page.getByRole('button', { name: '新建资源', exact: true }).click();
-
-    const dialog = page.locator('.t-dialog').filter({ hasText: '新建资源' });
-    await expect(dialog).toBeVisible();
-    await dialog.getByPlaceholder('例如 post').fill('article');
-    await dialog.getByPlaceholder('例如 帖子').fill('文章');
-    await dialog.getByPlaceholder('例如 /v1/posts/{postId}').fill('/v1/articles/{articleId}');
-    await dialog.getByRole('button', { name: '创建', exact: true }).click();
-
-    await expect(dialog).toBeHidden();
-    await expect(page.getByText('文章', { exact: true })).toBeVisible();
-
-    await page.getByRole('button', { name: '新建资源', exact: true }).click();
-    const freshDialog = page.locator('.t-dialog').filter({ hasText: '新建资源' });
-    await expect(freshDialog.getByPlaceholder('例如 post')).toHaveValue('');
-    await expect(freshDialog.getByPlaceholder('例如 帖子')).toHaveValue('');
-    await expect(freshDialog.getByPlaceholder('例如 /v1/posts/{postId}')).toHaveValue('');
-  });
-
-  test('PDP 策略模拟会展示 allow 和 deny 结果', async ({ page }) => {
+  test('本地服务资源支持新增、编辑和删除', async ({ page }) => {
     const state = await installAPIMocks(page);
     await seedServiceResource(page);
-    await page.goto('/authorization/simulator');
+    await page.goto('/service-resources');
 
-    await expect(page).toHaveURL(/\/authorization\/simulator$/);
-    await expect(page.getByRole('heading', { name: '策略模拟' })).toBeVisible();
-    await page.getByPlaceholder('例如 nexus-user-001').fill('allow-user');
-    await page.getByRole('textbox', { name: '例如 post', exact: true }).fill('post');
-    await page.getByPlaceholder('例如 update').fill('update');
-    await page.getByRole('button', { name: '执行模拟', exact: true }).click();
+    await expect(page.getByRole('heading', { name: '服务资源管理' })).toBeVisible();
+    await expect(page.getByRole('columnheader', { name: '唯一 Key', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: '新建服务资源', exact: true }).click();
+    const createDialog = page.locator('.t-dialog').filter({ hasText: '新建服务资源' });
+    await expect(createDialog).toBeVisible();
+    await createDialog.getByPlaceholder('例如 content-platform').fill('notification-platform');
+    await createDialog.getByPlaceholder('例如 内容平台').fill('通知平台');
+    await createDialog.getByPlaceholder('例如 permission.center.api').fill('permission.center.notification');
+    await createDialog.getByPlaceholder('可选').fill('本地通知服务');
 
-    await expect(page.getByText('允许', { exact: true })).toBeVisible();
-    await expect(page.getByText('ALLOW', { exact: true })).toBeVisible();
+    const createRequest = page.waitForRequest((request) => (
+      request.method() === 'POST' && request.url().endsWith('/api/v1/service-resources')
+    ));
+    await createDialog.getByRole('button', { name: '创建', exact: true }).click();
+    await createRequest;
 
-    await page.getByPlaceholder('例如 nexus-user-001').fill('deny-user');
-    await page.getByRole('button', { name: '执行模拟', exact: true }).click();
-    await expect(page.getByText('拒绝', { exact: true })).toBeVisible();
-    await expect(page.getByText('NO_MATCHING_POLICY', { exact: true })).toBeVisible();
-    expect(state.decisionRequests).toHaveLength(2);
+    const createdRow = page.getByRole('row').filter({ hasText: '通知平台' }).first();
+    await expect(createdRow).toBeVisible();
+    await expect(createdRow).toContainText('notification-platform');
+    expect(state.serviceResourceMutationRequests.find((item) => item.method === 'POST')?.payload).toEqual({
+      key: 'notification-platform',
+      display_name: '通知平台',
+      audience: 'permission.center.notification',
+      description: '本地通知服务',
+      is_active: true,
+    });
+
+    await createdRow.getByRole('button', { name: '编辑', exact: true }).click();
+    const editDialog = page.locator('.t-dialog').filter({ hasText: '编辑服务资源' });
+    await editDialog.getByPlaceholder('例如 内容平台').fill('通知中心');
+    const updateRequest = page.waitForRequest((request) => (
+      request.method() === 'PUT' && request.url().endsWith('/api/v1/service-resources/notification-platform')
+    ));
+    await editDialog.getByRole('button', { name: '保存', exact: true }).click();
+    await updateRequest;
+    await expect(page.getByText('通知中心', { exact: true })).toBeVisible();
+    expect(state.serviceResourceMutationRequests.find((item) => item.method === 'PUT')?.payload).toMatchObject({
+      display_name: '通知中心',
+      audience: 'permission.center.notification',
+      is_active: true,
+    });
+
+    const updatedRow = page.getByRole('row').filter({ hasText: '通知中心' }).first();
+    await updatedRow.getByRole('button', { name: '删除', exact: true }).click();
+    const deleteDialog = page.locator('.t-dialog').filter({ hasText: '删除服务资源' });
+    const deleteRequest = page.waitForRequest((request) => (
+      request.method() === 'DELETE' && request.url().endsWith('/api/v1/service-resources/notification-platform')
+    ));
+    await deleteDialog.getByRole('button', { name: '确认删除', exact: true }).click();
+    await deleteRequest;
+    await expect(page.getByText('通知中心', { exact: true })).toHaveCount(0);
+    expect(state.serviceResourceMutationRequests.some((item) => item.method === 'DELETE')).toBe(true);
   });
+
+  test('NexusAuth 服务资源条目仅供查看', async ({ page }) => {
+    const state = await installAPIMocks(page);
+    state.catalogSource = 'nexusauth';
+    state.serviceResources = [{ ...SECOND_SERVICE_RESOURCE }];
+    await seedServiceResource(page);
+    await page.goto('/service-resources');
+
+    await expect(page.getByText('目录来源：NexusAuth', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: '新建服务资源', exact: true })).toHaveCount(0);
+    const nexusRow = page.getByRole('row').filter({ hasText: SECOND_SERVICE_RESOURCE.display_name }).first();
+    await expect(nexusRow).toContainText(SECOND_SERVICE_RESOURCE.key);
+    await expect(nexusRow).toContainText('NexusAuth');
+    await expect(nexusRow).toContainText('只读');
+    await expect(nexusRow.getByRole('button', { name: '编辑', exact: true })).toHaveCount(0);
+    await expect(nexusRow.getByRole('button', { name: '删除', exact: true })).toHaveCount(0);
+  });
+
+  test('Swagger 导入使用当前已选服务资源', async ({ page }) => {
+    const state = await installAPIMocks(page);
+    await page.goto('/select-service-resource');
+    await page.locator('.service-resource-card').filter({ hasText: SECOND_SERVICE_RESOURCE.display_name }).click();
+    await page.getByRole('button', { name: '继续并进入控制台', exact: true }).click();
+    await page.goto('/api-endpoints');
+
+    await expect(page.getByRole('heading', { name: 'API 端点管理' })).toBeVisible();
+    await page.getByRole('button', { name: '导入 Swagger', exact: true }).click();
+    const dialog = page.locator('.t-dialog').filter({ hasText: '导入 Swagger API 端点' });
+    await expect(dialog).toContainText(SECOND_SERVICE_RESOURCE.key);
+    await expect(dialog.getByText('服务资源', { exact: true })).toBeVisible();
+    await dialog.getByPlaceholder('例如 https://example.com/swagger/openapi.json').fill('https://example.com/openapi.json');
+
+    const importRequest = page.waitForRequest((request) => (
+      request.method() === 'POST'
+      && request.url().endsWith('/api/v1/authorization/api-endpoints/import-swagger')
+    ));
+    await dialog.getByRole('button', { name: '开始导入', exact: true }).click();
+    await importRequest;
+
+    expect(state.swaggerImportRequests).toHaveLength(1);
+    expect(state.swaggerImportRequests[0]?.payload).toEqual({
+      service_resource: SECOND_SERVICE_RESOURCE.key,
+      swagger_url: 'https://example.com/openapi.json',
+    });
+    await expect(page.getByText('SwaggerController', { exact: true })).toBeVisible();
+  });
+
+  test('API 端点支持手工新增、编辑和删除', async ({ page }) => {
+    const state = await installAPIMocks(page);
+    await seedServiceResource(page);
+    await page.goto('/api-endpoints');
+
+    await page.getByRole('button', { name: '新建端点', exact: true }).click();
+    const createDialog = page.locator('.t-dialog').filter({ hasText: '新建 API 端点' });
+    await createDialog.getByPlaceholder('例如 UserController').fill('OrderController');
+    await createDialog.getByPlaceholder('例如 /v1/users/{id}').fill('/v1/orders/{id}');
+    await createDialog.getByPlaceholder('例如 查询用户详情').fill('查询订单详情');
+
+    const createRequest = page.waitForRequest((request) => (
+      request.method() === 'POST' && request.url().endsWith('/api/v1/authorization/api-endpoints')
+    ));
+    await createDialog.getByRole('button', { name: '创建', exact: true }).click();
+    await createRequest;
+    const createdRow = page.getByRole('row').filter({ hasText: '查询订单详情' }).first();
+    await expect(createdRow).toBeVisible();
+    expect(state.endpointRequests.find((item) => item.method === 'POST')?.payload).toMatchObject({
+      service_resource: FIRST_SERVICE_RESOURCE.key,
+      controller: 'OrderController',
+      method: 'GET',
+      path_template: '/v1/orders/{id}',
+      summary: '查询订单详情',
+      enabled: true,
+    });
+
+    await createdRow.getByRole('button', { name: '编辑', exact: true }).click();
+    const editDialog = page.locator('.t-dialog').filter({ hasText: '编辑 API 端点' });
+    await editDialog.getByPlaceholder('例如 UserController').fill('OrderControllerV2');
+    await editDialog.getByPlaceholder('例如 查询用户详情').fill('更新订单详情');
+    const updateRequest = page.waitForRequest((request) => (
+      request.method() === 'PUT' && request.url().endsWith('/api/v1/authorization/api-endpoints/endpoint-created-1')
+    ));
+    await editDialog.getByRole('button', { name: '保存', exact: true }).click();
+    await updateRequest;
+    await expect(page.getByText('更新订单详情', { exact: true })).toBeVisible();
+    expect(state.endpointRequests.find((item) => item.method === 'PUT')?.payload).toMatchObject({
+      controller: 'OrderControllerV2',
+      method: 'GET',
+      path_template: '/v1/orders/{id}',
+      summary: '更新订单详情',
+      enabled: true,
+    });
+
+    const updatedRow = page.getByRole('row').filter({ hasText: '更新订单详情' }).first();
+    await updatedRow.getByRole('button', { name: '删除', exact: true }).click();
+    const deleteDialog = page.locator('.t-dialog').filter({ hasText: '删除 API 端点' });
+    const deleteRequest = page.waitForRequest((request) => (
+      request.method() === 'DELETE' && request.url().endsWith('/api/v1/authorization/api-endpoints/endpoint-created-1')
+    ));
+    await deleteDialog.getByRole('button', { name: '确认删除', exact: true }).click();
+    await deleteRequest;
+    await expect(page.getByText('更新订单详情', { exact: true })).toHaveCount(0);
+    expect(state.endpointRequests.some((item) => item.method === 'DELETE')).toBe(true);
+  });
+
 });

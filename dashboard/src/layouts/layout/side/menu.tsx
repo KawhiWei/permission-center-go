@@ -1,62 +1,154 @@
-import { useState } from 'react';
-import { useLocation, useNavigate } from "react-router-dom";
-import { Menu, MenuValue } from "tdesign-react";
-import { DashboardIcon, MenuApplicationIcon, UsergroupIcon, UserIcon, ApiIcon } from 'tdesign-icons-react';
+import { useEffect, useMemo, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { Menu, MenuValue } from 'tdesign-react';
+import {
+  ApiIcon,
+  CloudIcon,
+  DashboardIcon,
+  FolderIcon,
+  LockOnIcon,
+  MenuApplicationIcon,
+  UserIcon,
+  UsergroupIcon,
+} from 'tdesign-icons-react';
+
 import { setPageLoading } from '../../../page-loading';
+import type { NavigationMenu } from '../../../router/dynamic-routes';
 
 const { MenuItem, SubMenu } = Menu;
 
 interface IProp {
-    collapse: boolean;
+  collapse: boolean;
+  menus: NavigationMenu[];
 }
 
-const MenuComponent = (props: IProp) => {
-    const { pathname } = useLocation();
-    const navigate = useNavigate();
-    const [expanded, setExpanded] = useState<string[]>(() => (
-        ['/roles', '/menus', '/user-roles', '/pdp', '/authorization/resources', '/authorization/actions', '/authorization/policies', '/authorization/simulator'].includes(pathname)
-            ? ['/permission-center']
-            : pathname === '/authorization/api-endpoints'
-              ? ['/developer-center']
-              : []
-    ));
+const getMenuIcon = (iconName: string) => {
+  switch (iconName.trim().toLowerCase()) {
+    case 'api':
+      return <ApiIcon />;
+    case 'cloud':
+      return <CloudIcon />;
+    case 'dashboard':
+      return <DashboardIcon />;
+    case 'folder':
+      return <FolderIcon />;
+    case 'lock':
+      return <LockOnIcon />;
+    case 'menu':
+      return <MenuApplicationIcon />;
+    case 'user':
+      return <UserIcon />;
+    case 'usergroup':
+      return <UsergroupIcon />;
+    default:
+      return undefined;
+  }
+};
 
-    const navigateWithLoading = async (nextPath: string) => {
-        if (nextPath === pathname) {
-            return;
+const findMenu = (menus: NavigationMenu[], path: string): NavigationMenu | undefined => {
+  for (const menu of menus) {
+    if (menu.path === path) {
+      return menu;
+    }
+    const child = findMenu(menu.children, path);
+    if (child) {
+      return child;
+    }
+  }
+  return undefined;
+};
+
+const activeParentPaths = (menus: NavigationMenu[], pathname: string): string[] => {
+  const expanded: string[] = [];
+  const visit = (nodes: NavigationMenu[]) => {
+    for (const node of nodes) {
+      if (node.children.length > 0) {
+        const childMatches = node.children.some((child) => (
+          child.path === pathname || pathname.startsWith(`${child.path}/`)
+        ));
+        if (childMatches || pathname === node.path || pathname.startsWith(`${node.path}/`)) {
+          expanded.push(node.path);
         }
+        visit(node.children);
+      }
+    }
+  };
+  visit(menus);
+  return expanded;
+};
 
-        setPageLoading(true);
-        navigate(nextPath);
-    };
+const MenuComponent = ({ collapse, menus }: IProp) => {
+  const { pathname } = useLocation();
+  const navigate = useNavigate();
+  const [expanded, setExpanded] = useState<string[]>([]);
 
-    const onMenuChange = (value: MenuValue) => {
-        const nextPath = String(value);
-        void navigateWithLoading(nextPath);
+  useEffect(() => {
+    setExpanded(activeParentPaths(menus, pathname));
+  }, [menus, pathname]);
+
+  const menuPaths = useMemo(() => {
+    const paths = new Set<string>();
+    const collect = (nodes: NavigationMenu[]) => {
+      nodes.forEach((node) => {
+        paths.add(node.path);
+        collect(node.children);
+      });
     };
+    collect(menus);
+    return paths;
+  }, [menus]);
+
+  const navigateWithLoading = (nextPath: string) => {
+    if (!nextPath || nextPath === pathname) {
+      return;
+    }
+
+    setPageLoading(true);
+    navigate(nextPath);
+  };
+
+  const onMenuChange = (value: MenuValue) => {
+    const nextPath = String(value);
+    if (!menuPaths.has(nextPath)) {
+      return;
+    }
+
+    const selectedMenu = findMenu(menus, nextPath);
+    if (selectedMenu?.children.length) {
+      return;
+    }
+
+    navigateWithLoading(nextPath);
+  };
+
+  const renderMenu = (menu: NavigationMenu) => {
+    const icon = getMenuIcon(menu.icon);
+    if (menu.children.length > 0) {
+      return (
+        <SubMenu key={menu.id || menu.path} value={menu.path} title={menu.name} icon={icon}>
+          {menu.children.map(renderMenu)}
+        </SubMenu>
+      );
+    }
 
     return (
-        <Menu
-            value={pathname}
-            collapsed={props.collapse}
-            expanded={expanded}
-            onChange={onMenuChange}
-            onExpand={(values) => setExpanded(values.map(String))}>
-            <MenuItem value="/dashboard" icon={<DashboardIcon />}>仪表盘</MenuItem>
-            <SubMenu value="/permission-center" title="权限中心" icon={<DashboardIcon />}>
-                <MenuItem value="/roles" icon={<UsergroupIcon />}>角色管理</MenuItem>
-                <MenuItem value="/menus" icon={<MenuApplicationIcon />}>菜单与按钮管理</MenuItem>
-                <MenuItem value="/user-roles" icon={<UserIcon />}>用户角色绑定</MenuItem>
-                <MenuItem value="/authorization/resources" icon={<ApiIcon />}>资源管理</MenuItem>
-                <MenuItem value="/authorization/actions" icon={<ApiIcon />}>动作管理</MenuItem>
-                <MenuItem value="/authorization/policies" icon={<ApiIcon />}>策略管理</MenuItem>
-                <MenuItem value="/authorization/simulator" icon={<ApiIcon />}>策略模拟</MenuItem>
-            </SubMenu>
-            <SubMenu value="/developer-center" title="开发者中心" icon={<ApiIcon />}>
-                <MenuItem value="/authorization/api-endpoints" icon={<ApiIcon />}>API 端点管理</MenuItem>
-            </SubMenu>
-        </Menu>
+      <MenuItem key={menu.id || menu.path} value={menu.path} icon={icon}>
+        {menu.name}
+      </MenuItem>
     );
+  };
+
+  return (
+    <Menu
+      value={pathname}
+      collapsed={collapse}
+      expanded={expanded}
+      onChange={onMenuChange}
+      onExpand={(values) => setExpanded(values.map(String))}
+    >
+      {menus.map(renderMenu)}
+    </Menu>
+  );
 };
 
 export default MenuComponent;

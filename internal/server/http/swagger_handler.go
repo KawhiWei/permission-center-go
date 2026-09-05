@@ -9,6 +9,7 @@ import (
 
 // SwaggerUI serves the bundled Swagger UI assets locally. The UI retrieves the
 // OpenAPI document from this service, so it works without a browser-side CDN.
+// SwaggerUI 返回内嵌静态资源的 Swagger UI 处理器。
 func SwaggerUI() http.Handler {
 	return httpSwagger.Handler(
 		httpSwagger.URL("/swagger/openapi.json"),
@@ -17,6 +18,7 @@ func SwaggerUI() http.Handler {
 	)
 }
 
+// OpenAPIDocument 返回权限中心当前公开 HTTP API 的 OpenAPI 文档。
 func (h *Handler) OpenAPIDocument(w http.ResponseWriter, _ *http.Request) {
 	writeRawJSON(w, http.StatusOK, openAPIDocument())
 }
@@ -29,6 +31,7 @@ type openAPIOperation struct {
 	body    bool
 }
 
+// openAPIDocument 生成当前 HTTP API 的 OpenAPI 文档。
 func openAPIDocument() map[string]any {
 	paths := map[string]any{}
 	for _, operation := range openAPIOperations {
@@ -61,7 +64,7 @@ func openAPIDocument() map[string]any {
 	}
 	return map[string]any{
 		"openapi": "3.0.3",
-		"info":    map[string]any{"title": "Permission Center API", "version": "1.0.0", "description": "Permission Center management and PDP API."},
+		"info":    map[string]any{"title": "Permission Center API", "version": "1.0.0", "description": "Permission Center management API."},
 		"servers": []map[string]string{{"url": "/", "description": "Current server"}},
 		"paths":   paths,
 		"components": map[string]any{
@@ -77,10 +80,7 @@ var openAPIOperations = []openAPIOperation{
 	{"GET", "/auth/login", "Authentication", "Start sign-in", false},
 	{"GET", "/auth/me", "Authentication", "Get current user", false},
 	{"POST", "/auth/logout", "Authentication", "Sign out", false},
-	{"POST", "/v1/applications", "Applications", "Create application", true}, {"GET", "/v1/applications", "Applications", "List applications", false}, {"GET", "/v1/applications/{application}", "Applications", "Get application", false}, {"PUT", "/v1/applications/{application}", "Applications", "Update application", true}, {"DELETE", "/v1/applications/{application}", "Applications", "Delete application", false},
-	{"POST", "/v1/roles", "Roles", "Create role", true}, {"GET", "/v1/roles", "Roles", "List roles", false}, {"POST", "/v1/menus", "Menus", "Create menu", true}, {"GET", "/v1/menus/tree", "Menus", "Get menu tree", false}, {"PUT", "/v1/roles/{roleID}/menus", "Roles", "Replace role menus", true}, {"GET", "/v1/roles/{roleID}/menus", "Roles", "List role menus", false}, {"PUT", "/v1/users/{userID}/roles", "User roles", "Replace user roles", true}, {"GET", "/v1/users/{userID}/roles", "User roles", "List user roles", false},
-	{"POST", "/v1/authorization/resources", "Authorization resources", "Create resource", true}, {"GET", "/v1/authorization/resources", "Authorization resources", "List resources", false}, {"GET", "/v1/authorization/resources/{id}", "Authorization resources", "Get resource", false}, {"PUT", "/v1/authorization/resources/{id}", "Authorization resources", "Update resource", true}, {"DELETE", "/v1/authorization/resources/{id}", "Authorization resources", "Delete resource", false},
-	{"POST", "/v1/authorization/actions", "Authorization actions", "Create action", true}, {"GET", "/v1/authorization/actions", "Authorization actions", "List actions", false}, {"GET", "/v1/authorization/actions/{id}", "Authorization actions", "Get action", false}, {"PUT", "/v1/authorization/actions/{id}", "Authorization actions", "Update action", true}, {"DELETE", "/v1/authorization/actions/{id}", "Authorization actions", "Delete action", false},
-	{"POST", "/v1/authorization/api-endpoints", "API endpoints", "Create API endpoint", true}, {"POST", "/v1/authorization/api-endpoints/import-swagger", "API endpoints", "Import Swagger endpoints", true}, {"GET", "/v1/authorization/api-endpoints", "API endpoints", "List API endpoints", false}, {"GET", "/v1/authorization/api-endpoints/{id}", "API endpoints", "Get API endpoint", false}, {"PUT", "/v1/authorization/api-endpoints/{id}", "API endpoints", "Update API endpoint", true}, {"DELETE", "/v1/authorization/api-endpoints/{id}", "API endpoints", "Delete API endpoint", false},
-	{"POST", "/v1/authorization/policies", "Authorization policies", "Create policy", true}, {"GET", "/v1/authorization/policies", "Authorization policies", "List policies", false}, {"GET", "/v1/authorization/policies/{id}", "Authorization policies", "Get policy", false}, {"PUT", "/v1/authorization/policies/{id}", "Authorization policies", "Update policy", true}, {"DELETE", "/v1/authorization/policies/{id}", "Authorization policies", "Delete policy", false}, {"GET", "/v1/authorization/policies/{id}/bindings", "Authorization policies", "List policy bindings", false}, {"PUT", "/v1/authorization/policies/{id}/bindings", "Authorization policies", "Replace policy bindings", true}, {"POST", "/v1/authorization/policies/{id}/simulate", "Authorization policies", "Simulate policy", true}, {"POST", "/v1/pdp/decisions", "PDP", "Evaluate PDP decision", true},
+	{"POST", "/v1/service-resources", "Service resources", "Create service resource", true}, {"GET", "/v1/service-resources", "Service resources", "List service resources", false}, {"GET", "/v1/service-resources/{key}", "Service resources", "Get service resource", false}, {"PUT", "/v1/service-resources/{key}", "Service resources", "Update service resource", true}, {"DELETE", "/v1/service-resources/{key}", "Service resources", "Delete service resource", false},
+	{"POST", "/v1/roles", "Roles", "Create role", true}, {"GET", "/v1/roles", "Roles", "List roles", false}, {"PUT", "/v1/roles/{roleID}", "Roles", "Update role", true}, {"DELETE", "/v1/roles/{roleID}", "Roles", "Delete role", false}, {"POST", "/v1/menus", "Menus", "Create menu", true}, {"GET", "/v1/menus/tree", "Menus", "Get menu tree", false}, {"PUT", "/v1/menus/{id}", "Menus", "Update menu", true}, {"DELETE", "/v1/menus/{id}", "Menus", "Delete menu", false}, {"PUT", "/v1/roles/{roleID}/menus", "Roles", "Replace role menus", true}, {"GET", "/v1/roles/{roleID}/menus", "Roles", "List role menus", false}, {"PUT", "/v1/users/{userID}/roles", "User roles", "Replace user roles", true}, {"GET", "/v1/users/{userID}/roles", "User roles", "List user roles", false},
+	{"POST", "/v1/authorization/api-endpoints", "API endpoints", "Create API endpoint", true}, {"GET", "/v1/authorization/api-endpoints", "API endpoints", "List API endpoints", false}, {"POST", "/v1/authorization/api-endpoints/import-swagger", "API endpoints", "Import Swagger endpoints", true}, {"GET", "/v1/authorization/api-endpoints/{id}", "API endpoints", "Get API endpoint", false}, {"PUT", "/v1/authorization/api-endpoints/{id}", "API endpoints", "Update API endpoint", true}, {"DELETE", "/v1/authorization/api-endpoints/{id}", "API endpoints", "Delete API endpoint", false},
 }

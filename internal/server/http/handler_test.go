@@ -42,8 +42,33 @@ func TestSwaggerUIAndOpenAPIDocument(t *testing.T) {
 		t.Fatalf("openapi version = %#v", document["openapi"])
 	}
 	paths, ok := document["paths"].(map[string]any)
-	if !ok || paths["/v1/authorization/api-endpoints/import-swagger"] == nil {
-		t.Fatalf("Swagger import endpoint missing from document: %#v", document["paths"])
+	if !ok {
+		t.Fatalf("OpenAPI paths missing from document: %#v", document["paths"])
+	}
+	for path := range paths {
+		if path == "/v1/authorization/decisions" || path == "/v1/pdp/decisions" || path == "/v1/applications" {
+			t.Fatalf("legacy path present in OpenAPI document: %s", path)
+		}
+	}
+	for _, operation := range []struct {
+		path   string
+		method string
+	}{
+		{path: "/v1/roles/{roleID}", method: "put"},
+		{path: "/v1/roles/{roleID}", method: "delete"},
+		{path: "/v1/menus/{id}", method: "put"},
+		{path: "/v1/menus/{id}", method: "delete"},
+		{path: "/v1/authorization/api-endpoints", method: "post"},
+		{path: "/v1/authorization/api-endpoints", method: "get"},
+		{path: "/v1/authorization/api-endpoints/import-swagger", method: "post"},
+		{path: "/v1/authorization/api-endpoints/{id}", method: "get"},
+		{path: "/v1/authorization/api-endpoints/{id}", method: "put"},
+		{path: "/v1/authorization/api-endpoints/{id}", method: "delete"},
+	} {
+		pathItem, ok := paths[operation.path].(map[string]any)
+		if !ok || pathItem[operation.method] == nil {
+			t.Fatalf("OpenAPI operation missing: %s %s", strings.ToUpper(operation.method), operation.path)
+		}
 	}
 }
 
@@ -64,7 +89,25 @@ func (r *testRoleRepo) Get(_ context.Context, id string) (*biz.Role, error) {
 	}
 	return value, nil
 }
-func (*testRoleRepo) ListByApplication(context.Context, string) ([]*biz.Role, error) { return nil, nil }
+func (r *testRoleRepo) Update(_ context.Context, value *biz.Role) (*biz.Role, error) {
+	if _, ok := r.values[value.ID]; !ok {
+		return nil, biz.ErrNotFound
+	}
+	r.values[value.ID] = value
+	return value, nil
+}
+func (r *testRoleRepo) SoftDelete(_ context.Context, id string) error {
+	value, ok := r.values[id]
+	if !ok {
+		return biz.ErrNotFound
+	}
+	value.IsDeleted = true
+	value.Enabled = false
+	return nil
+}
+func (*testRoleRepo) ListByServiceResource(context.Context, string) ([]*biz.Role, error) {
+	return nil, nil
+}
 func (r *testRoleRepo) ReplaceMenus(_ context.Context, _ string, menuIDs []uuid.UUID) error {
 	r.menuIDs = append([]uuid.UUID(nil), menuIDs...)
 	return nil
@@ -88,7 +131,7 @@ func (r *testUserRoleRepo) ReplaceRoles(_ context.Context, subject, app string, 
 	return nil
 }
 func (r *testUserRoleRepo) RoleIDs(context.Context, string, string) ([]string, error) {
-	return nil, nil
+	return append([]string(nil), r.roleIDs...), nil
 }
 
 func (r *testMenuRepo) Create(_ context.Context, menu *biz.Menu) (*biz.Menu, error) {
@@ -108,10 +151,26 @@ func (r *testMenuRepo) Get(_ context.Context, id uuid.UUID) (*biz.Menu, error) {
 	}
 	return menu, nil
 }
-func (r *testMenuRepo) ListByApplication(_ context.Context, application string) ([]*biz.Menu, error) {
+func (r *testMenuRepo) Update(_ context.Context, menu *biz.Menu) (*biz.Menu, error) {
+	if _, ok := r.values[menu.ID]; !ok {
+		return nil, biz.ErrNotFound
+	}
+	r.values[menu.ID] = menu
+	return menu, nil
+}
+func (r *testMenuRepo) SoftDelete(_ context.Context, id uuid.UUID) error {
+	menu, ok := r.values[id]
+	if !ok {
+		return biz.ErrNotFound
+	}
+	menu.IsDeleted = true
+	menu.Enabled = false
+	return nil
+}
+func (r *testMenuRepo) ListByServiceResource(_ context.Context, serviceResource string) ([]*biz.Menu, error) {
 	menus := make([]*biz.Menu, 0)
 	for _, menu := range r.values {
-		if menu.Application == application {
+		if menu.ServiceResource == serviceResource {
 			menus = append(menus, menu)
 		}
 	}
@@ -121,7 +180,7 @@ func (r *testMenuRepo) ListByApplication(_ context.Context, application string) 
 func TestCreateRole(t *testing.T) {
 	roles := &testRoleRepo{values: map[string]*biz.Role{}}
 	server := NewServer(NewHandler(biz.NewPermissionService(roles, &testMenuRepo{})))
-	req := httptest.NewRequest(http.MethodPost, "/v1/roles", strings.NewReader(`{"application":"admin","code":"operator","name":"Operator"}`))
+	req := httptest.NewRequest(http.MethodPost, "/v1/roles", strings.NewReader(`{"service_resource":"admin","code":"operator","name":"Operator"}`))
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, req)
 	if response.Code != http.StatusCreated {
@@ -140,7 +199,7 @@ func TestCreateRole(t *testing.T) {
 func TestRejectsUnknownJSONFields(t *testing.T) {
 	roles := &testRoleRepo{values: map[string]*biz.Role{}}
 	server := NewServer(NewHandler(biz.NewPermissionService(roles, &testMenuRepo{})))
-	request := httptest.NewRequest(http.MethodPost, "/v1/roles", strings.NewReader(`{"application":"admin","code":"operator","name":"Operator","other":true}`))
+	request := httptest.NewRequest(http.MethodPost, "/v1/roles", strings.NewReader(`{"service_resource":"admin","code":"operator","name":"Operator","other":true}`))
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, request)
 	if response.Code != http.StatusBadRequest {
@@ -151,14 +210,14 @@ func TestRejectsUnknownJSONFields(t *testing.T) {
 func TestMenuEndpointsUseMenuNaming(t *testing.T) {
 	menuID := uuid.New()
 	roles := &testRoleRepo{values: map[string]*biz.Role{
-		"role-1": {ID: "role-1", Application: "admin"},
+		"role-1": {ID: "role-1", ServiceResource: "admin", Enabled: true},
 	}}
 	menus := &testMenuRepo{values: map[uuid.UUID]*biz.Menu{
-		menuID: {ID: menuID, Application: "admin", Code: "items", Name: "Items", Type: biz.MenuTypeMenu},
+		menuID: {ID: menuID, ServiceResource: "admin", Code: "items", Name: "Items", Type: biz.MenuTypeMenu, Enabled: true},
 	}}
 	server := NewServer(NewHandler(biz.NewPermissionService(roles, menus)))
 
-	createRequest := httptest.NewRequest(http.MethodPost, "/v1/menus", strings.NewReader(`{"application":"admin","code":"settings","name":"Settings","type":"menu","path":"/settings"}`))
+	createRequest := httptest.NewRequest(http.MethodPost, "/v1/menus", strings.NewReader(`{"service_resource":"admin","code":"settings","name":"Settings","type":"menu","path":"/settings"}`))
 	createResponse := httptest.NewRecorder()
 	server.ServeHTTP(createResponse, createRequest)
 	if createResponse.Code != http.StatusCreated {
@@ -185,7 +244,7 @@ func TestMenuEndpointsUseMenuNaming(t *testing.T) {
 		t.Fatalf("role menus body = %s", roleMenusResponse.Body.String())
 	}
 
-	treeRequest := httptest.NewRequest(http.MethodGet, "/v1/menus/tree?application=admin", nil)
+	treeRequest := httptest.NewRequest(http.MethodGet, "/v1/menus/tree?service_resource=admin", nil)
 	treeResponse := httptest.NewRecorder()
 	server.ServeHTTP(treeResponse, treeRequest)
 	if treeResponse.Code != http.StatusOK {
@@ -198,7 +257,7 @@ func TestMenuEndpointsUseMenuNaming(t *testing.T) {
 		t.Fatalf("menu tree body = %s", treeResponse.Body.String())
 	}
 
-	legacyRequest := httptest.NewRequest(http.MethodGet, "/v1/resources/tree?application=admin", nil)
+	legacyRequest := httptest.NewRequest(http.MethodGet, "/v1/resources/tree?service_resource=admin", nil)
 	legacyResponse := httptest.NewRecorder()
 	server.ServeHTTP(legacyResponse, legacyRequest)
 	if legacyResponse.Code != http.StatusNotFound {
@@ -210,7 +269,7 @@ func TestReplaceUserRoles(t *testing.T) {
 	roles := &testRoleRepo{values: map[string]*biz.Role{}}
 	userRoles := &testUserRoleRepo{}
 	server := NewServer(NewHandler(biz.NewPermissionService(roles, &testMenuRepo{}, userRoles)))
-	request := httptest.NewRequest(http.MethodPut, "/v1/users/nexus-user-1/roles?application=admin", strings.NewReader(`{"role_ids":["operator"]}`))
+	request := httptest.NewRequest(http.MethodPut, "/v1/users/nexus-user-1/roles?service_resource=admin", strings.NewReader(`{"role_ids":["operator"]}`))
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, request)
 	if response.Code != http.StatusOK {
@@ -221,6 +280,83 @@ func TestReplaceUserRoles(t *testing.T) {
 	}
 }
 
+func TestRoleUpdateAndDeleteEndpoints(t *testing.T) {
+	roles := &testRoleRepo{values: map[string]*biz.Role{
+		"role-1": {ID: "role-1", ServiceResource: "admin", Code: "old", Name: "Old", Enabled: true},
+	}}
+	server := NewServer(NewHandler(biz.NewPermissionService(roles, &testMenuRepo{})))
+
+	updateRequest := httptest.NewRequest(http.MethodPut, "/v1/roles/role-1", strings.NewReader(`{"code":"operator","name":"Operator","description":"Operators","enabled":true}`))
+	updateResponse := httptest.NewRecorder()
+	server.ServeHTTP(updateResponse, updateRequest)
+	if updateResponse.Code != http.StatusOK {
+		t.Fatalf("update role status = %d body=%s", updateResponse.Code, updateResponse.Body.String())
+	}
+	role := roles.values["role-1"]
+	if role.Code != "operator" || role.Name != "Operator" || role.Description != "Operators" || !role.Enabled {
+		t.Fatalf("updated role = %#v", role)
+	}
+
+	deleteResponse := httptest.NewRecorder()
+	server.ServeHTTP(deleteResponse, httptest.NewRequest(http.MethodDelete, "/v1/roles/role-1", nil))
+	if deleteResponse.Code != http.StatusOK {
+		t.Fatalf("delete role status = %d body=%s", deleteResponse.Code, deleteResponse.Body.String())
+	}
+	if !role.IsDeleted || role.Enabled {
+		t.Fatalf("deleted role = %#v", role)
+	}
+}
+
+func TestMenuUpdateAndDeleteEndpoints(t *testing.T) {
+	rootID, menuID := uuid.New(), uuid.New()
+	root := &biz.Menu{ID: rootID, ServiceResource: "admin", Code: "items", Name: "Items", Type: biz.MenuTypeMenu, Enabled: true}
+	menu := &biz.Menu{ID: menuID, ServiceResource: "admin", ParentID: &rootID, Code: "create", Name: "Create", Type: biz.MenuTypeButton, APIPath: "/v1/items", HTTPMethod: http.MethodPost, Enabled: true}
+	menus := &testMenuRepo{values: map[uuid.UUID]*biz.Menu{rootID: root, menuID: menu}}
+	server := NewServer(NewHandler(biz.NewPermissionService(&testRoleRepo{values: map[string]*biz.Role{}}, menus)))
+
+	updateRequest := httptest.NewRequest(http.MethodPut, "/v1/menus/"+menuID.String(), strings.NewReader(`{"code":"update","name":"Update","description":"Update items","path":"/items/update","component":"UpdatePage","api_path":"/v1/items/update","http_method":"PATCH","icon":"edit","sort":8,"enabled":true}`))
+	updateResponse := httptest.NewRecorder()
+	server.ServeHTTP(updateResponse, updateRequest)
+	if updateResponse.Code != http.StatusOK {
+		t.Fatalf("update menu status = %d body=%s", updateResponse.Code, updateResponse.Body.String())
+	}
+	updatedMenu := menus.values[menuID]
+	if updatedMenu.Code != "update" || updatedMenu.Name != "Update" || updatedMenu.Description != "Update items" || updatedMenu.Path != "/items/update" ||
+		updatedMenu.Component != "UpdatePage" || updatedMenu.APIPath != "/v1/items/update" || updatedMenu.HTTPMethod != "PATCH" || updatedMenu.Icon != "edit" || updatedMenu.Sort != 8 || !updatedMenu.Enabled {
+		t.Fatalf("updated menu = %#v", updatedMenu)
+	}
+
+	deleteResponse := httptest.NewRecorder()
+	server.ServeHTTP(deleteResponse, httptest.NewRequest(http.MethodDelete, "/v1/menus/"+menuID.String(), nil))
+	if deleteResponse.Code != http.StatusOK {
+		t.Fatalf("delete menu status = %d body=%s", deleteResponse.Code, deleteResponse.Body.String())
+	}
+	if !updatedMenu.IsDeleted || updatedMenu.Enabled {
+		t.Fatalf("deleted menu = %#v", updatedMenu)
+	}
+
+	invalidResponse := httptest.NewRecorder()
+	server.ServeHTTP(invalidResponse, httptest.NewRequest(http.MethodDelete, "/v1/menus/not-a-uuid", nil))
+	if invalidResponse.Code != http.StatusBadRequest {
+		t.Fatalf("invalid menu ID status = %d body=%s", invalidResponse.Code, invalidResponse.Body.String())
+	}
+}
+
+func TestLegacyRoutesAreNotFound(t *testing.T) {
+	server := NewServer(NewHandler(nil))
+	for _, legacyPath := range []string{
+		"/v1/authorization/decisions",
+		"/v1/pdp/decisions",
+		"/v1/applications",
+	} {
+		response := httptest.NewRecorder()
+		server.ServeHTTP(response, httptest.NewRequest(http.MethodGet, legacyPath, nil))
+		if response.Code != http.StatusNotFound {
+			t.Fatalf("legacy route %s status = %d", legacyPath, response.Code)
+		}
+	}
+}
+
 func TestDevelopmentModeInjectsAuditActor(t *testing.T) {
 	roles := &testRoleRepo{values: map[string]*biz.Role{}}
 	authenticator, err := auth.New(context.Background(), config.OIDCConfig{Enabled: false})
@@ -228,7 +364,7 @@ func TestDevelopmentModeInjectsAuditActor(t *testing.T) {
 		t.Fatal(err)
 	}
 	server := NewServer(NewHandler(biz.NewPermissionService(roles, &testMenuRepo{}), authenticator))
-	request := httptest.NewRequest(http.MethodPost, "/v1/roles", strings.NewReader(`{"application":"admin","code":"operator","name":"Operator"}`))
+	request := httptest.NewRequest(http.MethodPost, "/v1/roles", strings.NewReader(`{"service_resource":"admin","code":"operator","name":"Operator"}`))
 	response := httptest.NewRecorder()
 	server.ServeHTTP(response, request)
 	if response.Code != http.StatusCreated {

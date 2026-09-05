@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -20,18 +19,21 @@ import (
 
 const maxSwaggerDocumentSize = 8 << 20
 
-var swaggerUIURLPattern = regexp.MustCompile(`(?i)(?:["']?url["']?)\s*[:=]\s*["']([^"']+)["']`)
-var swaggerUIConfigURLPattern = regexp.MustCompile(`(?i)(?:["']?configUrl["']?)\s*[:=]\s*["']([^"']+)["']`)
-var swaggerInitializerPattern = regexp.MustCompile(`(?i)<script[^>]+src=["']([^"']*swagger-initializer[^"']*)["']`)
-var swaggerUIScriptPattern = regexp.MustCompile(`(?i)<script[^>]+src=["']([^"']+\.js(?:\?[^"']*)?)["']`)
+var (
+	swaggerUIURLPattern       = regexp.MustCompile(`(?i)(?:["']?url["']?)\s*[:=]\s*["']([^"']+)['"]`)
+	swaggerUIConfigURLPattern = regexp.MustCompile(`(?i)(?:["']?configUrl["']?)\s*[:=]\s*["']([^"']+)['"]`)
+	swaggerInitializerPattern = regexp.MustCompile(`(?i)<script[^>]+src=["']([^"']*swagger-initializer[^"']*)["']`)
+	swaggerUIScriptPattern    = regexp.MustCompile(`(?i)<script[^>]+src=["']([^"']+\.js(?:\?[^"']*)?)["']`)
+	swaggerControllerPattern  = regexp.MustCompile(`[^a-z0-9._-]+`)
+)
 
+// SwaggerImportRequest 描述从远程 Swagger/OpenAPI 文档导入端点的请求。
 type SwaggerImportRequest struct {
-	ServiceResource string
-	// Application is accepted for callers using the pre-service-resource API.
-	Application string
-	SwaggerURL  string
+	ServiceResource string `json:"service_resource"`
+	SwaggerURL      string `json:"swagger_url"`
 }
 
+// SwaggerImportResult 返回 Swagger/OpenAPI 导入的统计结果。
 type SwaggerImportResult struct {
 	Total   int `json:"total"`
 	Created int `json:"created"`
@@ -54,11 +56,11 @@ type swaggerDocument struct {
 type swaggerOperation struct {
 	Tags        []string `json:"tags" yaml:"tags"`
 	OperationID string   `json:"operationId" yaml:"operationId"`
+	Summary     string   `json:"summary" yaml:"summary"`
 }
 
-// Swagger and OpenAPI allow metadata such as parameters and summary beside
-// methods in a path item. Declaring methods explicitly makes those legal keys
-// ignorable rather than attempting to decode them as operations.
+// Swagger/OpenAPI path items may contain parameters and servers in addition
+// to operations. Explicit method fields leave those metadata keys ignored.
 type swaggerPathItem struct {
 	Get     *swaggerOperation `json:"get" yaml:"get"`
 	Post    *swaggerOperation `json:"post" yaml:"post"`
@@ -71,78 +73,18 @@ type swaggerPathItem struct {
 }
 
 func (p swaggerPathItem) operations() map[string]*swaggerOperation {
-	return map[string]*swaggerOperation{"GET": p.Get, "POST": p.Post, "PUT": p.Put, "PATCH": p.Patch, "DELETE": p.Delete, "HEAD": p.Head, "OPTIONS": p.Options, "TRACE": p.Trace}
+	return map[string]*swaggerOperation{
+		"GET": p.Get, "POST": p.Post, "PUT": p.Put, "PATCH": p.Patch,
+		"DELETE": p.Delete, "HEAD": p.Head, "OPTIONS": p.Options, "TRACE": p.Trace,
+	}
 }
 
-// ImportSwaggerAPIEndpoints imports only HTTP operations. The tag used by
-// Java, .NET, and Go generators is retained as the endpoint service code.
-func (s *PDPService) ImportSwaggerAPIEndpoints(ctx context.Context, request SwaggerImportRequest) (*SwaggerImportResult, error) {
-	if err := s.ensureReady(); err != nil {
-		return nil, err
-	}
-	serviceResource, err := setServiceResourceScope(request.ServiceResource, request.Application)
-	if err != nil {
-		return nil, err
-	}
-	if err := s.ensureServiceResource(ctx, serviceResource); err != nil {
-		return nil, err
-	}
-	document, err := fetchSwaggerDocument(ctx, request.SwaggerURL)
-	if err != nil {
-		return nil, err
-	}
-	operations, err := parseSwaggerOperations(document)
-	if err != nil {
-		return nil, err
-	}
-	existing, err := s.repository.ListAPIEndpoints(ctx, serviceResource)
-	if err != nil {
-		return nil, err
-	}
-	routes := make(map[string]struct{}, len(existing))
-	for _, endpoint := range existing {
-		routes[endpoint.Method+"\x00"+endpoint.PathTemplate] = struct{}{}
-	}
-	result := &SwaggerImportResult{Total: len(operations)}
-	resources := map[string]*AuthorizationResource{}
-	actions := map[string]*AuthorizationAction{}
-	for _, operation := range operations {
-		key := operation.Method + "\x00" + operation.PathTemplate
-		if _, exists := routes[key]; exists {
-			result.Skipped++
-			continue
-		}
-		resource, ok := resources[operation.ServiceCode]
-		if !ok {
-			resource, err = s.swaggerResource(ctx, serviceResource, operation.ServiceCode)
-			if err != nil {
-				return nil, err
-			}
-			resources[operation.ServiceCode] = resource
-		}
-		action, ok := actions[operation.Method]
-		if !ok {
-			action, err = s.swaggerAction(ctx, serviceResource, operation.Method)
-			if err != nil {
-				return nil, err
-			}
-			actions[operation.Method] = action
-		}
-		_, err = s.CreateAPIEndpoint(ctx, &AuthorizationAPIEndpoint{
-			ServiceResource: serviceResource, Application: serviceResource, ServiceCode: operation.ServiceCode, Method: operation.Method,
-			PathTemplate: operation.PathTemplate, ResourceID: resource.ID, ActionID: action.ID,
-			EnforcementMode: EnforcementModeDisabled, Enabled: false,
-		})
-		if err != nil {
-			return nil, err
-		}
-		routes[key] = struct{}{}
-		result.Created++
-	}
-	return result, nil
+type swaggerEndpointOperation struct {
+	Controller   string
+	Method       string
+	PathTemplate string
+	Summary      string
 }
-
-type swaggerEndpointOperation struct{ ServiceCode, Method, PathTemplate string }
 
 func parseSwaggerOperations(body []byte) ([]swaggerEndpointOperation, error) {
 	var document swaggerDocument
@@ -156,7 +98,7 @@ func parseSwaggerOperations(body []byte) ([]swaggerEndpointOperation, error) {
 	}
 	basePath := strings.TrimSpace(document.BasePath)
 	if basePath == "" && len(document.Servers) > 0 {
-		if serverURL, err := url.Parse(document.Servers[0].URL); err == nil {
+		if serverURL, err := url.Parse(strings.TrimSpace(document.Servers[0].URL)); err == nil {
 			basePath = serverURL.Path
 		}
 	}
@@ -166,27 +108,38 @@ func parseSwaggerOperations(body []byte) ([]swaggerEndpointOperation, error) {
 	operations := make([]swaggerEndpointOperation, 0)
 	for route, item := range document.Paths {
 		for method, operation := range item.operations() {
-			if operation == nil || !isHTTPMethod(method) {
+			if operation == nil || !isAPIEndpointHTTPMethod(method) {
 				continue
 			}
-			serviceCode := swaggerServiceCode(*operation, document.Info.Title)
+			controller := swaggerController(*operation, document.Info.Title)
 			pathTemplate := joinSwaggerPath(basePath, route)
-			if _, _, _, err := normalizeEndpointRoute(serviceCode, method, pathTemplate); err != nil {
+			if err := validateSwaggerOperation(controller, method, pathTemplate); err != nil {
 				return nil, err
 			}
-			operations = append(operations, swaggerEndpointOperation{ServiceCode: serviceCode, Method: method, PathTemplate: pathTemplate})
+			summary := strings.TrimSpace(operation.Summary)
+			if summary == "" {
+				summary = strings.TrimSpace(operation.OperationID)
+			}
+			operations = append(operations, swaggerEndpointOperation{
+				Controller: controller, Method: method, PathTemplate: pathTemplate, Summary: summary,
+			})
 		}
 	}
 	if len(operations) == 0 {
 		return nil, fmt.Errorf("%w: Swagger document contains no HTTP operations", ErrInvalidArgument)
 	}
 	sort.Slice(operations, func(i, j int) bool {
-		if operations[i].PathTemplate == operations[j].PathTemplate {
-			return operations[i].Method < operations[j].Method
+		if operations[i].PathTemplate != operations[j].PathTemplate {
+			return operations[i].PathTemplate < operations[j].PathTemplate
 		}
-		return operations[i].PathTemplate < operations[j].PathTemplate
+		return operations[i].Method < operations[j].Method
 	})
 	return operations, nil
+}
+
+func validateSwaggerOperation(controller, method, pathTemplate string) error {
+	value := &APIEndpoint{Controller: controller, Method: method, PathTemplate: pathTemplate}
+	return normalizeAPIEndpoint(value)
 }
 
 func fetchSwaggerDocument(ctx context.Context, rawURL string) ([]byte, error) {
@@ -198,9 +151,8 @@ func fetchSwaggerDocument(ctx context.Context, rawURL string) ([]byte, error) {
 	if err == nil || (documentURL.Hostname() != "localhost" && documentURL.Hostname() != "127.0.0.1") {
 		return document, err
 	}
-	// In Docker, a Swagger URL entered as localhost points at the API container
-	// rather than the developer machine. Compose provides this alias for the
-	// host while native deployments continue using the original URL.
+	// In Docker, localhost may resolve to the API container. Compose exposes
+	// host.docker.internal for the developer machine in that environment.
 	hostURL := *documentURL
 	hostURL.Host = "host.docker.internal"
 	if documentURL.Port() != "" {
@@ -213,7 +165,12 @@ func fetchSwaggerDocumentAt(ctx context.Context, documentURL *url.URL, depth int
 	if depth > 3 {
 		return nil, fmt.Errorf("%w: Swagger UI document reference is nested too deeply", ErrInvalidArgument)
 	}
-	client := &http.Client{Timeout: 15 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	client := &http.Client{
+		Timeout: 15 * time.Second,
+		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 	fetch := func(value *url.URL) ([]byte, string, error) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, value.String(), nil)
 		if err != nil {
@@ -224,7 +181,7 @@ func fetchSwaggerDocumentAt(ctx context.Context, documentURL *url.URL, depth int
 			return nil, "", fmt.Errorf("fetch Swagger document: %w", err)
 		}
 		defer resp.Body.Close()
-		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 			return nil, "", fmt.Errorf("fetch Swagger document: received HTTP %d", resp.StatusCode)
 		}
 		body, err := io.ReadAll(io.LimitReader(resp.Body, maxSwaggerDocumentSize+1))
@@ -240,7 +197,8 @@ func fetchSwaggerDocumentAt(ctx context.Context, documentURL *url.URL, depth int
 	if err != nil {
 		return nil, err
 	}
-	if bytes.Contains(bytes.ToLower(body), []byte("<html")) || strings.Contains(strings.ToLower(contentType), "text/html") {
+	lowerBody := bytes.ToLower(body)
+	if bytes.Contains(lowerBody, []byte("<html")) || strings.Contains(strings.ToLower(contentType), "text/html") {
 		match := swaggerUIURLPattern.FindSubmatch(body)
 		if len(match) < 2 {
 			match = swaggerUIConfigURLPattern.FindSubmatch(body)
@@ -304,10 +262,9 @@ func swaggerUIReference(body []byte, documentURL *url.URL, fetch func(*url.URL) 
 	return nil, nil
 }
 
-// Swagger UI serializes its inline JSON with escaped forward slashes, for
-// example `\/swagger\/openapi.json`. URL parsing expects the decoded form.
+// Swagger UI escapes slashes in inline JSON as \/; decode them before URL parsing.
 func swaggerReferenceURL(documentURL *url.URL, reference []byte) (*url.URL, error) {
-	value := strings.ReplaceAll(strings.TrimSpace(string(reference)), `\/`, `/`)
+	value := strings.ReplaceAll(strings.TrimSpace(string(reference)), `\/`, "/")
 	return documentURL.Parse(value)
 }
 
@@ -321,65 +278,39 @@ func isSwaggerDocument(body []byte) bool {
 	return document.Swagger == "2.0" || strings.HasPrefix(document.OpenAPI, "3.")
 }
 
-func (s *PDPService) swaggerResource(ctx context.Context, application, serviceCode string) (*AuthorizationResource, error) {
-	code := "swagger-" + serviceCode
-	if value, err := s.repository.GetResourceByCode(ctx, application, code); err == nil {
-		return value, nil
-	} else if !errorsIsNotFound(err) {
-		return nil, err
-	}
-	return s.CreateResource(ctx, &AuthorizationResource{ServiceResource: application, Application: application, Code: code, Type: ResourceTypeAPI, Name: serviceCode, Description: "Imported from Swagger", Enabled: true})
-}
-
-func (s *PDPService) swaggerAction(ctx context.Context, application, method string) (*AuthorizationAction, error) {
-	code := strings.ToLower(method)
-	if value, err := s.repository.GetActionByCode(ctx, application, code); err == nil {
-		return value, nil
-	} else if !errorsIsNotFound(err) {
-		return nil, err
-	}
-	return s.CreateAction(ctx, &AuthorizationAction{ServiceResource: application, Application: application, Code: code, Name: method, Description: "Imported from Swagger", Enabled: true})
-}
-
-func errorsIsNotFound(err error) bool { return errors.Is(err, ErrNotFound) }
-func isHTTPMethod(value string) bool {
-	switch value {
-	case "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE":
-		return true
-	}
-	return false
-}
-func swaggerServiceCode(operation swaggerOperation, fallback string) string {
+func swaggerController(operation swaggerOperation, fallback string) string {
 	if len(operation.Tags) > 0 && strings.TrimSpace(operation.Tags[0]) != "" {
-		return sanitizeSwaggerCode(operation.Tags[0])
+		return sanitizeSwaggerController(operation.Tags[0])
 	}
-	if operation.OperationID != "" {
-		return operationIDServiceCode(operation.OperationID)
+	if strings.TrimSpace(operation.OperationID) != "" {
+		return operationIDController(operation.OperationID)
 	}
-	return sanitizeSwaggerCode(fallback)
+	return sanitizeSwaggerController(fallback)
 }
 
-func operationIDServiceCode(value string) string {
+func operationIDController(value string) string {
 	parts := strings.FieldsFunc(value, func(r rune) bool {
 		return r == '_' || r == '.' || r == '/' || r == ':' || r == '-'
 	})
 	if len(parts) == 0 {
 		return "default"
 	}
-	return sanitizeSwaggerCode(parts[0])
+	return sanitizeSwaggerController(parts[0])
 }
-func sanitizeSwaggerCode(value string) string {
+
+func sanitizeSwaggerController(value string) string {
 	value = strings.ToLower(strings.TrimSpace(value))
-	value = regexp.MustCompile(`[^a-z0-9._-]+`).ReplaceAllString(value, "-")
+	value = swaggerControllerPattern.ReplaceAllString(value, "-")
 	value = strings.Trim(value, "-._")
 	if value == "" {
 		return "default"
 	}
-	if len(value) > 100 {
-		return value[:100]
+	if len([]rune(value)) > apiEndpointControllerMaxLength {
+		return string([]rune(value)[:apiEndpointControllerMaxLength])
 	}
 	return value
 }
+
 func joinSwaggerPath(basePath, route string) string {
 	return path.Clean("/" + strings.Trim(basePath, "/") + "/" + strings.TrimSpace(route))
 }

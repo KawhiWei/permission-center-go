@@ -12,11 +12,11 @@ import (
 	"github.com/luck/permission-center-go/internal/biz"
 )
 
-const roleColumns = `id, service_resource, application, code, name, description, enabled,
+const roleColumns = `id, service_resource, code, name, description, enabled,
 	created_by_id, created_by_name, created_at, updated_by_id, updated_by_name,
 	updated_at, is_deleted`
 
-// RoleRepository stores application-scoped roles and their menu grants.
+// RoleRepository 保存服务资源作用域内的角色及菜单授权。
 type RoleRepository struct {
 	pool *pgxpool.Pool
 }
@@ -28,10 +28,10 @@ func NewRoleRepository(pool *pgxpool.Pool) *RoleRepository {
 }
 
 func (r *RoleRepository) Create(ctx context.Context, role *biz.Role) (*biz.Role, error) {
-	if role == nil || strings.TrimSpace(bizScope(role.ServiceResource, role.Application)) == "" {
+	if role == nil || strings.TrimSpace(role.ServiceResource) == "" {
 		return nil, fmt.Errorf("%w: role and service_resource are required", biz.ErrInvalidArgument)
 	}
-	scope := bizScope(role.ServiceResource, role.Application)
+	scope := strings.TrimSpace(role.ServiceResource)
 	storedID := strings.TrimSpace(role.ID)
 	if storedID == "" {
 		generatedID, err := newRoleID()
@@ -42,10 +42,10 @@ func (r *RoleRepository) Create(ctx context.Context, role *biz.Role) (*biz.Role,
 	}
 	const query = `
 		INSERT INTO roles (
-			id, service_resource, application, code, name, description, enabled,
+			id, service_resource, code, name, description, enabled,
 			created_by_id, created_by_name, updated_by_id, updated_by_name, is_deleted
 		)
-		VALUES ($1, $2, $2, $3, $4, $5, $6, $7, $8, $7, $8, FALSE)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $7, $8, FALSE)
 		RETURNING ` + roleColumns
 	actor := biz.AuditActorFromContext(ctx)
 	value, err := scanRole(r.pool.QueryRow(ctx, query,
@@ -78,7 +78,7 @@ func (r *RoleRepository) Get(ctx context.Context, id string) (*biz.Role, error) 
 	}
 	const query = `SELECT ` + roleColumns + `
 		FROM roles
-		WHERE id = $1 AND is_deleted = FALSE AND enabled = TRUE`
+		WHERE id = $1 AND is_deleted = FALSE`
 	value, err := scanRole(r.pool.QueryRow(ctx, query, id))
 	if err != nil {
 		return nil, mapDBError(err)
@@ -86,12 +86,12 @@ func (r *RoleRepository) Get(ctx context.Context, id string) (*biz.Role, error) 
 	return toBizRole(value), nil
 }
 
-func (r *RoleRepository) ListByApplication(ctx context.Context, application string) ([]*biz.Role, error) {
+func (r *RoleRepository) ListByServiceResource(ctx context.Context, serviceResource string) ([]*biz.Role, error) {
 	const query = `SELECT ` + roleColumns + `
 		FROM roles
-		WHERE service_resource = $1 AND is_deleted = FALSE AND enabled = TRUE
+		WHERE service_resource = $1 AND is_deleted = FALSE
 		ORDER BY name, id`
-	rows, err := r.pool.Query(ctx, query, application)
+	rows, err := r.pool.Query(ctx, query, serviceResource)
 	if err != nil {
 		return nil, mapDBError(err)
 	}
@@ -110,10 +110,12 @@ func (r *RoleRepository) ListByApplication(ctx context.Context, application stri
 	return roles, nil
 }
 
+// Update 更新角色的可变字段并写入更新审计信息，保留服务资源和创建审计字段。
 func (r *RoleRepository) Update(ctx context.Context, role *biz.Role) (*biz.Role, error) {
 	if role == nil || strings.TrimSpace(role.ID) == "" {
 		return nil, fmt.Errorf("%w: role id is required", biz.ErrInvalidArgument)
 	}
+	roleID := strings.TrimSpace(role.ID)
 	const query = `
 		UPDATE roles
 		SET code = $2, name = $3, description = $4, enabled = $5,
@@ -122,7 +124,7 @@ func (r *RoleRepository) Update(ctx context.Context, role *biz.Role) (*biz.Role,
 		RETURNING ` + roleColumns
 	actor := biz.AuditActorFromContext(ctx)
 	value, err := scanRole(r.pool.QueryRow(ctx, query,
-		role.ID,
+		roleID,
 		role.Code,
 		role.Name,
 		role.Description,
@@ -153,29 +155,51 @@ func (r *RoleRepository) SetEnabled(ctx context.Context, id string, enabled bool
 	return toBizRole(value), nil
 }
 
+// SoftDelete 在一个事务中软删除角色及其菜单、用户角色关联。
 func (r *RoleRepository) SoftDelete(ctx context.Context, id string) error {
 	if strings.TrimSpace(id) == "" {
 		return fmt.Errorf("%w: role id is required", biz.ErrInvalidArgument)
 	}
-	const query = `
+	id = strings.TrimSpace(id)
+	actor := biz.AuditActorFromContext(ctx)
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return mapDBError(err)
+	}
+	defer tx.Rollback(ctx)
+
+	result, err := tx.Exec(ctx, `
 		UPDATE roles
 		SET is_deleted = TRUE, enabled = FALSE,
 			updated_by_id = $2, updated_by_name = $3, updated_at = NOW()
-		WHERE id = $1 AND is_deleted = FALSE`
-	actor := biz.AuditActorFromContext(ctx)
-	result, err := r.pool.Exec(ctx, query, id, actor.ID, actor.Name)
+		WHERE id = $1 AND is_deleted = FALSE`, id, actor.ID, actor.Name)
 	if err != nil {
 		return mapDBError(err)
 	}
 	if result.RowsAffected() == 0 {
 		return biz.ErrNotFound
 	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE role_menus
+		SET is_deleted = TRUE,
+			updated_by_id = $2, updated_by_name = $3, updated_at = NOW()
+		WHERE role_id = $1 AND is_deleted = FALSE`, id, actor.ID, actor.Name); err != nil {
+		return mapDBError(err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE user_roles
+		SET is_deleted = TRUE,
+			updated_by_id = $2, updated_by_name = $3, updated_at = NOW()
+		WHERE role_id = $1 AND is_deleted = FALSE`, id, actor.ID, actor.Name); err != nil {
+		return mapDBError(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return mapDBError(err)
+	}
 	return nil
 }
 
-// ReplaceMenus atomically replaces all menu and button grants for a role. The
-// database trigger independently checks that every menu belongs to the same
-// application as the role.
+// ReplaceMenus 原子替换角色的菜单和按钮授权，数据库同时校验服务资源作用域。
 func (r *RoleRepository) ReplaceMenus(ctx context.Context, roleID string, menuIDs []uuid.UUID) error {
 	if strings.TrimSpace(roleID) == "" {
 		return fmt.Errorf("%w: role id is required", biz.ErrInvalidArgument)

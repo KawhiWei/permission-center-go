@@ -6,8 +6,8 @@ import (
 	"time"
 )
 
-// BaseFields is the common audit projection shared by all permission records.
-// Audit identities are supplied by the authenticated request context, never by request JSON.
+// BaseFields 是所有权限记录共用的审计字段投影。
+// 审计身份由已认证请求上下文提供，不从请求 JSON 获取。
 type BaseFields struct {
 	CreatedByID   string    `json:"created_by_id"`
 	CreatedByName string    `json:"created_by_name"`
@@ -18,6 +18,7 @@ type BaseFields struct {
 	IsDeleted     bool      `json:"is_deleted"`
 }
 
+// AuditActor 表示写入权限记录审计字段的操作者身份。
 type AuditActor struct {
 	ID   string
 	Name string
@@ -25,6 +26,7 @@ type AuditActor struct {
 
 type auditActorContextKey struct{}
 
+// WithAuditActor 将审计操作者写入上下文；缺少 ID 或名称时分别使用 system 或 ID 作为默认值。
 func WithAuditActor(ctx context.Context, actor AuditActor) context.Context {
 	actor.ID = strings.TrimSpace(actor.ID)
 	actor.Name = strings.TrimSpace(actor.Name)
@@ -37,6 +39,7 @@ func WithAuditActor(ctx context.Context, actor AuditActor) context.Context {
 	return context.WithValue(ctx, auditActorContextKey{}, actor)
 }
 
+// AuditActorFromContext 从上下文读取审计操作者；未配置时返回 system。
 func AuditActorFromContext(ctx context.Context) AuditActor {
 	if ctx != nil {
 		if actor, ok := ctx.Value(auditActorContextKey{}).(AuditActor); ok && strings.TrimSpace(actor.ID) != "" {
@@ -51,6 +54,7 @@ func AuditActorFromContext(ctx context.Context) AuditActor {
 	return AuditActor{ID: "system", Name: "system"}
 }
 
+// NewBaseFields 根据操作者初始化创建和更新审计字段。
 func NewBaseFields(actor AuditActor) BaseFields {
 	if strings.TrimSpace(actor.ID) == "" {
 		actor = AuditActor{ID: "system", Name: "system"}

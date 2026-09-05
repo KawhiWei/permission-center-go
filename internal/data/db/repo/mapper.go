@@ -26,13 +26,6 @@ func toBizRole(value *model.Role) *biz.Role {
 		Enabled:     value.Enabled,
 	}
 	result.ServiceResource = value.ServiceResource
-	result.Application = value.Application
-	if result.ServiceResource == "" {
-		result.ServiceResource = result.Application
-	}
-	if result.Application == "" {
-		result.Application = result.ServiceResource
-	}
 	return result
 }
 
@@ -65,12 +58,14 @@ func toBizMenu(value *model.Menu) *biz.Menu {
 		Enabled:     value.Enabled,
 	}
 	result.ServiceResource = value.ServiceResource
-	result.Application = value.Application
-	if result.ServiceResource == "" {
-		result.ServiceResource = result.Application
-	}
-	if result.Application == "" {
-		result.Application = result.ServiceResource
-	}
 	return result
+}
+
+func baseFields(value model.BaseFields) biz.BaseFields {
+	return biz.BaseFields{
+		CreatedByID: value.CreatedByID, CreatedByName: value.CreatedByName,
+		CreatedAt: value.CreatedAt, UpdatedByID: value.UpdatedByID,
+		UpdatedByName: value.UpdatedByName, UpdatedAt: value.UpdatedAt,
+		IsDeleted: value.IsDeleted,
+	}
 }

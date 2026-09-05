@@ -4,11 +4,7 @@ database:
   url: "postgres://postgres:postgres@localhost:55433/permission_center?sslmode=disable"
   max_conns: 10
   min_conns: 2
-application_catalog:
-  source: "local"
 service_resource_catalog:
-  # Keep local applications as the default for a standalone deployment. Set
-  # the source to nexusauth only after configuring its directory credential.
   source: "local"
   nexusauth_base_url: "http://localhost:5100"
   # Configure a targetType=service_resource Open API credential through

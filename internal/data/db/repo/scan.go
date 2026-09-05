@@ -13,7 +13,6 @@ func scanRole(row rowScanner) (*model.Role, error) {
 	err := row.Scan(
 		&value.ID,
 		&value.ServiceResource,
-		&value.Application,
 		&value.Code,
 		&value.Name,
 		&value.Description,
@@ -34,7 +33,6 @@ func scanMenu(row rowScanner) (*model.Menu, error) {
 	err := row.Scan(
 		&value.ID,
 		&value.ServiceResource,
-		&value.Application,
 		&value.ParentID,
 		&value.Type,
 		&value.Code,

@@ -16,6 +16,10 @@ http:
   addr: ":8080"
 database:
   url: "postgres://postgres:postgres@localhost:55433/permission_center?sslmode=disable"
+service_resource_catalog:
+  source: nexusauth
+  nexusauth_base_url: "http://nexus-auth:5100"
+  api_key: "directory-token"
 oidc:
   enabled: true
   authority: "http://localhost:5100"
@@ -64,10 +68,10 @@ http:
   addr: ":8080"
 database:
   url: "postgres://postgres:postgres@localhost:55433/permission_center?sslmode=disable"
-application_catalog:
-  source: "local"
 service_resource_catalog:
-  source: "local"
+  source: nexusauth
+  nexusauth_base_url: "http://yaml-nexus-auth:5100"
+  api_key: "yaml-token"
   timeout: "1s"
 oidc:
   enabled: false
@@ -75,7 +79,6 @@ oidc:
 	if err := os.WriteFile(configPath, contents, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PERMISSION_CENTER_SERVICE_RESOURCE_CATALOG_SOURCE", "nexusauth")
 	t.Setenv("PERMISSION_CENTER_SERVICE_RESOURCE_CATALOG_NEXUSAUTH_BASE_URL", "http://nexus-auth:5100")
 	t.Setenv("PERMISSION_CENTER_SERVICE_RESOURCE_CATALOG_API_KEY", "directory-token")
 	t.Setenv("PERMISSION_CENTER_SERVICE_RESOURCE_CATALOG_TIMEOUT", "1500ms")
@@ -112,6 +115,26 @@ oidc: {enabled: false}
 	}
 }
 
+func TestLoadDefaultsServiceResourceCatalogToLocal(t *testing.T) {
+	clearConfigEnv(t)
+	configPath := filepath.Join(t.TempDir(), "app.yaml")
+	contents := []byte(`
+http: {addr: ":8080"}
+database: {url: "postgres://postgres:postgres@localhost:55433/permission_center?sslmode=disable"}
+oidc: {enabled: false}
+`)
+	if err := os.WriteFile(configPath, contents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.ServiceResourceCatalog.Source != "local" {
+		t.Fatalf("default service-resource source = %q", cfg.ServiceResourceCatalog.Source)
+	}
+}
+
 func TestLoadRejectsUnsupportedServiceResourceCatalogSource(t *testing.T) {
 	clearConfigEnv(t)
 	configPath := filepath.Join(t.TempDir(), "app.yaml")
@@ -135,7 +158,9 @@ func TestLoadRejectsInvalidServiceResourceCatalogTimeoutSeconds(t *testing.T) {
 	contents := []byte(`
 http: {addr: ":8080"}
 database: {url: "postgres://postgres:postgres@localhost:55433/permission_center?sslmode=disable"}
-service_resource_catalog: {source: local}
+service_resource_catalog:
+  nexusauth_base_url: "http://nexus-auth:5100"
+  api_key: "directory-token"
 oidc: {enabled: false}
 `)
 	if err := os.WriteFile(configPath, contents, 0o600); err != nil {

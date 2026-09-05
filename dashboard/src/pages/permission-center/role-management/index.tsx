@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Button, Card, Dialog, Drawer, Form, Input, MessagePlugin, Space, Tag, Checkbox } from 'tdesign-react';
+import { Button, Card, Checkbox, Dialog, Drawer, Form, Input, MessagePlugin, Select, Space, Tag } from 'tdesign-react';
 
 import {
   createRole,
+  deleteRole,
   getMenuTree,
   getRoleMenuIDs,
   listRoles,
   replaceRoleMenus,
+  updateRole,
   type Menu,
   type Role,
 } from '../../../api/permission';
@@ -17,6 +19,7 @@ type RoleForm = {
   code: string;
   name: string;
   description: string;
+  enabled: boolean;
 };
 
 type FlatMenu = {
@@ -24,7 +27,12 @@ type FlatMenu = {
   depth: number;
 };
 
-const EMPTY_ROLE_FORM: RoleForm = { code: '', name: '', description: '' };
+const EMPTY_ROLE_FORM: RoleForm = { code: '', name: '', description: '', enabled: true };
+
+const statusOptions = [
+  { label: '启用', value: 'enabled' },
+  { label: '停用', value: 'disabled' },
+];
 
 const flattenMenus = (nodes: Menu[], depth = 0): FlatMenu[] => nodes.flatMap((menu) => [
   { menu, depth },
@@ -37,7 +45,10 @@ const RoleManagementPage = () => {
   const [loading, setLoading] = useState(false);
   const [dialogVisible, setDialogVisible] = useState(false);
   const [roleForm, setRoleForm] = useState<RoleForm>(EMPTY_ROLE_FORM);
-  const [creating, setCreating] = useState(false);
+  const [editingRole, setEditingRole] = useState<Role | null>(null);
+  const [savingRole, setSavingRole] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Role | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [grantVisible, setGrantVisible] = useState(false);
   const [grantRole, setGrantRole] = useState<Role | null>(null);
   const [grantMenus, setGrantMenus] = useState<FlatMenu[]>([]);
@@ -61,20 +72,36 @@ const RoleManagementPage = () => {
     void loadRoles(serviceResource);
   }, [serviceResource, loadRoles]);
 
-  const openCreateDialog = () => {
+  const resetRoleDialog = () => {
+    setEditingRole(null);
     setRoleForm({ ...EMPTY_ROLE_FORM });
+  };
+
+  const openCreateDialog = () => {
+    resetRoleDialog();
     setDialogVisible(true);
   };
 
-  const closeCreateDialog = () => {
-    if (creating) {
+  const openEditDialog = (role: Role) => {
+    setEditingRole(role);
+    setRoleForm({
+      code: role.code,
+      name: role.name,
+      description: role.description,
+      enabled: role.enabled,
+    });
+    setDialogVisible(true);
+  };
+
+  const closeRoleDialog = () => {
+    if (savingRole) {
       return;
     }
     setDialogVisible(false);
-    setRoleForm({ ...EMPTY_ROLE_FORM });
+    resetRoleDialog();
   };
 
-  const submitCreateRole = async () => {
+  const submitRole = async () => {
     const code = roleForm.code.trim();
     const name = roleForm.name.trim();
     if (!code || !name) {
@@ -82,17 +109,46 @@ const RoleManagementPage = () => {
       return;
     }
 
-    setCreating(true);
+    const editing = editingRole;
+    setSavingRole(true);
     try {
-      await createRole({ service_resource: serviceResource, code, name, description: roleForm.description.trim() });
+      if (editing) {
+        const updated = await updateRole(editing.id, {
+          code,
+          name,
+          description: roleForm.description.trim(),
+          enabled: roleForm.enabled,
+        });
+        setRoles((current) => current.map((role) => role.id === updated.id ? updated : role));
+      } else {
+        const created = await createRole({ service_resource: serviceResource, code, name, description: roleForm.description.trim() });
+        setRoles((current) => [...current, created]);
+      }
       setDialogVisible(false);
-      setRoleForm({ ...EMPTY_ROLE_FORM });
-      MessagePlugin.success('角色已创建');
-      await loadRoles(serviceResource);
+      resetRoleDialog();
+      MessagePlugin.success(editing ? '角色已更新' : '角色已创建');
     } catch (error) {
-      MessagePlugin.error(getRequestErrorMessage(error, '创建角色失败'));
+      MessagePlugin.error(getRequestErrorMessage(error, editing ? '更新角色失败' : '创建角色失败'));
     } finally {
-      setCreating(false);
+      setSavingRole(false);
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget) {
+      return;
+    }
+    const target = deleteTarget;
+    setDeleting(true);
+    try {
+      await deleteRole(target.id);
+      setRoles((current) => current.filter((role) => role.id !== target.id));
+      setDeleteTarget(null);
+      MessagePlugin.success('角色已删除');
+    } catch (error) {
+      MessagePlugin.error(getRequestErrorMessage(error, '删除角色失败'));
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -151,7 +207,7 @@ const RoleManagementPage = () => {
       />
 
       <div className="permission-toolbar">
-        <span className="permission-toolbar-meta">共 {roles.length} 个启用角色</span>
+        <span className="permission-toolbar-meta">共 {roles.length} 个角色</span>
       </div>
 
       <Card className="permission-card" bordered>
@@ -183,7 +239,11 @@ const RoleManagementPage = () => {
                   <td className="permission-table-muted">{formatDateTime(role.createdAt)}</td>
                   <td><Tag theme={role.enabled ? 'success' : 'default'} variant="light-outline">{role.enabled ? '启用' : '停用'}</Tag></td>
                   <td>
-                    <Button variant="text" theme="primary" type="button" onClick={() => void openGrantDrawer(role)}>菜单授权</Button>
+                    <Space size="small">
+                      <Button variant="text" theme="primary" type="button" onClick={() => openEditDialog(role)}>编辑</Button>
+                      <Button variant="text" theme="danger" type="button" onClick={() => setDeleteTarget(role)}>删除</Button>
+                      <Button variant="text" theme="primary" type="button" disabled={!role.enabled} onClick={() => void openGrantDrawer(role)}>菜单授权</Button>
+                    </Space>
                   </td>
                 </tr>
               ))}
@@ -194,14 +254,14 @@ const RoleManagementPage = () => {
 
       <Dialog
         visible={dialogVisible}
-        header="新建角色"
+        header={editingRole ? '编辑角色' : '新建角色'}
         width={520}
-        confirmBtn={{ content: '创建', theme: 'primary', loading: creating }}
+        confirmBtn={{ content: editingRole ? '保存' : '创建', theme: 'primary', loading: savingRole }}
         cancelBtn="取消"
-        confirmLoading={creating}
-        onConfirm={() => void submitCreateRole()}
-        onCancel={closeCreateDialog}
-        onClose={closeCreateDialog}
+        confirmLoading={savingRole}
+        onConfirm={() => void submitRole()}
+        onCancel={closeRoleDialog}
+        onClose={closeRoleDialog}
         destroyOnClose
       >
         <Form className="permission-drawer-form" labelAlign="top">
@@ -229,7 +289,33 @@ const RoleManagementPage = () => {
               onChange={(value) => setRoleForm((prev) => ({ ...prev, description: value }))}
             />
           </Form.FormItem>
+          {editingRole ? (
+            <Form.FormItem label="启用状态">
+              <Select
+                value={roleForm.enabled ? 'enabled' : 'disabled'}
+                options={statusOptions}
+                onChange={(value) => setRoleForm((prev) => ({ ...prev, enabled: value === 'enabled' }))}
+              />
+            </Form.FormItem>
+          ) : null}
         </Form>
+      </Dialog>
+
+      <Dialog
+        visible={Boolean(deleteTarget)}
+        header="删除角色"
+        width={460}
+        confirmBtn={{ content: '确认删除', theme: 'danger', loading: deleting }}
+        cancelBtn="取消"
+        confirmLoading={deleting}
+        onConfirm={() => void confirmDelete()}
+        onCancel={() => { if (!deleting) setDeleteTarget(null); }}
+        onClose={() => { if (!deleting) setDeleteTarget(null); }}
+        destroyOnClose
+      >
+        <p className="permission-delete-warning">
+          确认删除角色 <strong>{deleteTarget?.name || deleteTarget?.code || ''}</strong>？删除后该角色的菜单授权和用户绑定也会失效。
+        </p>
       </Dialog>
 
       <Drawer
@@ -257,7 +343,7 @@ const RoleManagementPage = () => {
               <div className="permission-grant-list">
                 {grantMenus.map(({ menu, depth }) => (
                   <div key={menu.id} className="permission-grant-item" style={{ paddingLeft: 8 + depth * 22 }}>
-                    <Checkbox value={menu.id} />
+                    <Checkbox value={menu.id} disabled={!menu.enabled} />
                     <div className="permission-grant-label">
                       <Tag theme={menu.type === 'menu' ? 'primary' : 'warning'} variant="light-outline">
                         {menu.type === 'menu' ? '菜单' : '按钮'}

@@ -1,11 +1,10 @@
 package model
 
-// Role is scoped to exactly one application.
+// Role 归属于一个服务资源，是菜单授权和 API 端点授权的主体。
 type Role struct {
 	BaseFields
 	ID              string
 	ServiceResource string
-	Application     string
 	Code            string
 	Name            string
 	Description     string

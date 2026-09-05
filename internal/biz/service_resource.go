@@ -12,100 +12,317 @@ import (
 )
 
 const (
-	// NexusAuth currently limits API resource names to 128 characters. Keeping
-	// the same bound here lets the local and remote catalogs share validation.
+	// NexusAuth 当前将 API 资源名称限制为 128 个字符；本地和远程目录共用该校验上限。
 	maxServiceResourceLength      = 128
 	serviceResourceDefaultTimeout = 5 * time.Second
+
+	// ServiceResourceSourceLocal 表示由权限中心维护的服务资源。
+	ServiceResourceSourceLocal = "local"
+	// ServiceResourceSourceNexusAuth 表示从 NexusAuth 同步的服务资源。
+	ServiceResourceSourceNexusAuth = "nexusauth"
 )
 
-// ServiceResource is the permission namespace published by an identity
-// platform. Permission Center only consumes its metadata; it does not manage
-// NexusAuth resources.
+// ServiceResource 表示身份平台发布的权限服务资源命名空间。
+// Permission Center 只消费其元数据，不负责管理 NexusAuth 服务资源。
 type ServiceResource struct {
 	ID          string    `json:"id,omitempty"`
+	Key         string    `json:"key"`
 	Name        string    `json:"name"`
 	DisplayName string    `json:"display_name"`
 	Audience    string    `json:"audience"`
 	Description string    `json:"description,omitempty"`
 	IsActive    bool      `json:"is_active"`
+	Source      string    `json:"source"`
 	CreatedAt   time.Time `json:"created_at"`
 }
 
-// ServiceResourceCatalog is deliberately read-only. It is used to validate
-// permission scope and to populate the post-login scope selector; mutation is
-// owned by the configured catalog provider.
+// ServiceResourceCatalog 提供只读的服务资源目录。
+// 它用于校验权限作用域并填充登录后的作用域选择器，资源变更由目录提供方负责。
 type ServiceResourceCatalog interface {
 	List(context.Context) ([]*ServiceResource, error)
 	Get(context.Context, string) (*ServiceResource, error)
 }
 
-// LocalServiceResourceCatalog adapts the existing local applications table to
-// the service-resource contract. The application identifier is the stable
-// service-resource name for local deployments.
-type LocalServiceResourceCatalog struct {
-	applications ApplicationRepository
+// ServiceResourceRepository 定义服务资源目录的持久化操作。
+// UpsertNexusAuth 由远程目录同步使用，必须保留同键本地记录的优先级。
+type ServiceResourceRepository interface {
+	Create(context.Context, *ServiceResource) (*ServiceResource, error)
+	Get(context.Context, string) (*ServiceResource, error)
+	List(context.Context) ([]*ServiceResource, error)
+	Update(context.Context, *ServiceResource) (*ServiceResource, error)
+	SoftDelete(context.Context, string) error
+	UpsertNexusAuth(context.Context, *ServiceResource) (*ServiceResource, error)
 }
 
-func NewLocalServiceResourceCatalog(applications ApplicationRepository) *LocalServiceResourceCatalog {
-	return &LocalServiceResourceCatalog{applications: applications}
+// ServiceResourceSourceRepository 定义按来源过滤服务资源的可选仓储能力。
+// PostgreSQL 仓储实现该接口，业务服务优先使用数据库过滤；轻量测试仓储可只实现基础接口。
+type ServiceResourceSourceRepository interface {
+	GetBySource(context.Context, string, string) (*ServiceResource, error)
+	ListBySource(context.Context, string) ([]*ServiceResource, error)
 }
 
-func (c *LocalServiceResourceCatalog) List(ctx context.Context) ([]*ServiceResource, error) {
-	if c == nil || c.applications == nil {
-		return nil, fmt.Errorf("service resource catalog is not configured")
+// ServiceResourceService 提供持久化目录、远程目录同步和本地资源 CRUD。
+type ServiceResourceService struct {
+	repository ServiceResourceRepository
+	remote     ServiceResourceCatalog
+	source     string
+}
+
+var _ ServiceResourceCatalog = (*ServiceResourceService)(nil)
+
+// CatalogSource 返回环境配置决定的服务资源目录来源。
+func (s *ServiceResourceService) CatalogSource() string {
+	if s == nil {
+		return ""
 	}
-	values, err := c.applications.List(ctx)
+	return s.source
+}
+
+// NewServiceResourceCatalog 创建按配置来源工作的持久化服务资源目录。
+// local 来源仅读取仓储；nexusauth 来源在成功同步远程目录后再从仓储读取。
+func NewServiceResourceCatalog(repository ServiceResourceRepository, remote ServiceResourceCatalog, source string) (*ServiceResourceService, error) {
+	if repository == nil {
+		return nil, fmt.Errorf("service resource repository is required")
+	}
+	source, err := normalizeServiceResourceCatalogSource(source)
 	if err != nil {
 		return nil, err
 	}
-	resources := make([]*ServiceResource, 0, len(values))
+	if source == ServiceResourceSourceNexusAuth && remote == nil {
+		return nil, fmt.Errorf("nexusauth service resource catalog is required")
+	}
+	return &ServiceResourceService{repository: repository, remote: remote, source: source}, nil
+}
+
+// Create 创建一条本地服务资源；来源、外部 ID 和创建时间由服务端控制。
+func (s *ServiceResourceService) Create(ctx context.Context, resource *ServiceResource) (*ServiceResource, error) {
+	if s == nil || s.repository == nil {
+		return nil, fmt.Errorf("service resource repository is not configured")
+	}
+	if s.source == ServiceResourceSourceNexusAuth {
+		return nil, fmt.Errorf("%w: NexusAuth service resources cannot be created", ErrConflict)
+	}
+	if resource == nil {
+		return nil, fmt.Errorf("%w: service resource is required", ErrInvalidArgument)
+	}
+	resourceKey, err := validateServiceResource(resource.Key)
+	if err != nil {
+		return nil, err
+	}
+	if source := strings.TrimSpace(resource.Source); source != "" && !strings.EqualFold(source, ServiceResourceSourceLocal) {
+		return nil, fmt.Errorf("%w: NexusAuth service resources cannot be created locally", ErrConflict)
+	}
+	created := *resource
+	created.Key = resourceKey
+	created.Source = ServiceResourceSourceLocal
+	created.ID = ""
+	return s.repository.Create(ctx, &created)
+}
+
+// Update 更新本地服务资源的展示信息、受众、描述和启用状态。
+// 业务键、来源和外部 ID 不接受客户端修改。
+func (s *ServiceResourceService) Update(ctx context.Context, resource *ServiceResource) (*ServiceResource, error) {
+	if s == nil || s.repository == nil {
+		return nil, fmt.Errorf("service resource repository is not configured")
+	}
+	if s.source == ServiceResourceSourceNexusAuth {
+		return nil, fmt.Errorf("%w: NexusAuth service resources cannot be updated", ErrConflict)
+	}
+	if resource == nil {
+		return nil, fmt.Errorf("%w: service resource is required", ErrInvalidArgument)
+	}
+	resourceKey, err := validateServiceResource(resource.Key)
+	if err != nil {
+		return nil, err
+	}
+	if source := strings.TrimSpace(resource.Source); source != "" && !strings.EqualFold(source, ServiceResourceSourceLocal) {
+		return nil, fmt.Errorf("%w: NexusAuth service resources cannot be updated", ErrConflict)
+	}
+	existing, err := s.repository.Get(ctx, resourceKey)
+	if err != nil {
+		return nil, err
+	}
+	if existing == nil {
+		return nil, ErrNotFound
+	}
+	if existing.Source != ServiceResourceSourceLocal {
+		return nil, fmt.Errorf("%w: NexusAuth service resources cannot be updated", ErrConflict)
+	}
+	updated := *existing
+	updated.Key = existing.Key
+	updated.DisplayName = strings.TrimSpace(resource.DisplayName)
+	updated.Audience = strings.TrimSpace(resource.Audience)
+	updated.Description = strings.TrimSpace(resource.Description)
+	updated.IsActive = resource.IsActive
+	return s.repository.Update(ctx, &updated)
+}
+
+// Delete 软删除本地服务资源，并拒绝删除 NexusAuth 来源记录。
+func (s *ServiceResourceService) Delete(ctx context.Context, resourceKey string) error {
+	if s == nil || s.repository == nil {
+		return fmt.Errorf("service resource repository is not configured")
+	}
+	if s.source == ServiceResourceSourceNexusAuth {
+		return fmt.Errorf("%w: NexusAuth service resources cannot be deleted", ErrConflict)
+	}
+	resourceKey, err := validateServiceResource(resourceKey)
+	if err != nil {
+		return err
+	}
+	existing, err := s.repository.Get(ctx, resourceKey)
+	if err != nil {
+		return err
+	}
+	if existing == nil {
+		return ErrNotFound
+	}
+	if existing.Source != ServiceResourceSourceLocal {
+		return fmt.Errorf("%w: NexusAuth service resources cannot be deleted", ErrConflict)
+	}
+	return s.repository.SoftDelete(ctx, resourceKey)
+}
+
+// List 返回目录中的当前未删除服务资源。
+func (s *ServiceResourceService) List(ctx context.Context) ([]*ServiceResource, error) {
+	if s == nil || s.repository == nil {
+		return nil, fmt.Errorf("service resource repository is not configured")
+	}
+	if s.source == ServiceResourceSourceNexusAuth {
+		if err := s.syncRemote(ctx); err != nil {
+			return nil, err
+		}
+	}
+	return s.listBySource(ctx, s.source)
+}
+
+// Get 返回指定业务键对应的当前未删除服务资源。
+func (s *ServiceResourceService) Get(ctx context.Context, resourceKey string) (*ServiceResource, error) {
+	if s == nil || s.repository == nil {
+		return nil, fmt.Errorf("service resource repository is not configured")
+	}
+	resourceKey, err := validateServiceResource(resourceKey)
+	if err != nil {
+		return nil, err
+	}
+	if s.source == ServiceResourceSourceNexusAuth {
+		if err := s.syncRemote(ctx); err != nil {
+			return nil, err
+		}
+	}
+	return s.getBySource(ctx, resourceKey, s.source)
+}
+
+// listBySource 按来源读取服务资源；支持按来源查询的仓储直接在数据库中过滤。
+func (s *ServiceResourceService) listBySource(ctx context.Context, source string) ([]*ServiceResource, error) {
+	if repository, ok := s.repository.(ServiceResourceSourceRepository); ok {
+		return repository.ListBySource(ctx, source)
+	}
+	values, err := s.repository.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	filtered := make([]*ServiceResource, 0, len(values))
 	for _, value := range values {
+		if value != nil && strings.EqualFold(strings.TrimSpace(value.Source), source) {
+			filtered = append(filtered, value)
+		}
+	}
+	return filtered, nil
+}
+
+// getBySource 按来源读取单个服务资源；错误来源统一视为不存在。
+func (s *ServiceResourceService) getBySource(ctx context.Context, resourceKey, source string) (*ServiceResource, error) {
+	if repository, ok := s.repository.(ServiceResourceSourceRepository); ok {
+		value, err := repository.GetBySource(ctx, resourceKey, source)
+		if err != nil {
+			return nil, err
+		}
 		if value == nil {
+			return nil, ErrNotFound
+		}
+		return value, nil
+	}
+	value, err := s.repository.Get(ctx, resourceKey)
+	if err != nil {
+		return nil, err
+	}
+	if value == nil || !strings.EqualFold(strings.TrimSpace(value.Source), source) {
+		return nil, ErrNotFound
+	}
+	return value, nil
+}
+
+func (s *ServiceResourceService) syncRemote(ctx context.Context) error {
+	if s.remote == nil {
+		return fmt.Errorf("nexusauth service resource catalog is not configured")
+	}
+	resources, err := s.remote.List(ctx)
+	if err != nil {
+		return err
+	}
+	for _, resource := range resources {
+		if resource == nil {
 			continue
 		}
-		resources = append(resources, localServiceResource(value))
+		synced, err := normalizeRemoteServiceResource(resource)
+		if err != nil {
+			return err
+		}
+		if _, err := s.repository.UpsertNexusAuth(ctx, synced); err != nil {
+			return err
+		}
 	}
-	return resources, nil
+	return nil
 }
 
-func (c *LocalServiceResourceCatalog) Get(ctx context.Context, name string) (*ServiceResource, error) {
-	if c == nil || c.applications == nil {
-		return nil, fmt.Errorf("service resource catalog is not configured")
+func normalizeRemoteServiceResource(resource *ServiceResource) (*ServiceResource, error) {
+	if resource == nil {
+		return nil, fmt.Errorf("%w: service resource is required", ErrInvalidArgument)
 	}
-	value, err := c.applications.Get(ctx, strings.TrimSpace(name))
+	resourceKey, err := validateServiceResource(resource.Key)
 	if err != nil {
 		return nil, err
 	}
-	return localServiceResource(value), nil
+	value := *resource
+	value.Key = resourceKey
+	value.Source = ServiceResourceSourceNexusAuth
+	value.ID = strings.TrimSpace(value.ID)
+	value.Name = strings.TrimSpace(value.Name)
+	value.DisplayName = strings.TrimSpace(value.DisplayName)
+	if value.Name == "" {
+		value.Name = value.DisplayName
+	}
+	value.Audience = strings.TrimSpace(value.Audience)
+	value.Description = strings.TrimSpace(value.Description)
+	return &value, nil
 }
 
-func localServiceResource(value *Application) *ServiceResource {
-	if value == nil {
-		return nil
+func normalizeServiceResourceCatalogSource(source string) (string, error) {
+	source = strings.ToLower(strings.TrimSpace(source))
+	if source == "" {
+		source = ServiceResourceSourceLocal
 	}
-	return &ServiceResource{
-		ID:          value.Application,
-		Name:        value.Application,
-		DisplayName: value.Name,
-		Audience:    value.Application,
-		Description: value.Description,
-		IsActive:    value.Enabled && !value.IsDeleted,
-		CreatedAt:   value.CreatedAt,
+	if source != ServiceResourceSourceLocal && source != ServiceResourceSourceNexusAuth {
+		return "", fmt.Errorf("%w: service_resource_catalog.source must be local or nexusauth", ErrInvalidArgument)
 	}
+	return source, nil
 }
 
-// NexusAuthServiceResourceCatalog reads the NexusAuth OpenAPI directory with
-// a dedicated bearer credential. The credential is never returned or logged.
+// NexusAuthServiceResourceCatalog 使用专用 bearer 凭据读取 NexusAuth OpenAPI 服务资源目录。
+// 凭据不会被返回或写入日志。
 type NexusAuthServiceResourceCatalog struct {
 	baseURL    string
 	credential string
 	client     *http.Client
 }
 
+// NewNexusAuthServiceResourceCatalog 创建读取 NexusAuth 服务资源目录的客户端。
 func NewNexusAuthServiceResourceCatalog(baseURL, credential string, timeout time.Duration) (*NexusAuthServiceResourceCatalog, error) {
 	return NewNexusAuthServiceResourceCatalogWithClient(baseURL, credential, timeout, nil)
 }
 
+// NewNexusAuthServiceResourceCatalogWithClient 创建可注入 HTTP 客户端的 NexusAuth 服务资源目录客户端。
+// baseURL 必须是绝对的 HTTP 或 HTTPS 地址，credential 不能为空；非正 timeout 使用默认值。
 func NewNexusAuthServiceResourceCatalogWithClient(baseURL, credential string, timeout time.Duration, client *http.Client) (*NexusAuthServiceResourceCatalog, error) {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	parsed, err := url.Parse(baseURL)
@@ -125,6 +342,7 @@ func NewNexusAuthServiceResourceCatalogWithClient(baseURL, credential string, ti
 	return &NexusAuthServiceResourceCatalog{baseURL: baseURL, credential: credential, client: client}, nil
 }
 
+// List 从 NexusAuth 服务资源目录读取全部服务资源。
 func (c *NexusAuthServiceResourceCatalog) List(ctx context.Context) ([]*ServiceResource, error) {
 	if c == nil || c.client == nil {
 		return nil, fmt.Errorf("service resource catalog is not configured")
@@ -150,9 +368,10 @@ func (c *NexusAuthServiceResourceCatalog) List(ctx context.Context) ([]*ServiceR
 	return decodeNexusAuthServiceResources(body)
 }
 
-func (c *NexusAuthServiceResourceCatalog) Get(ctx context.Context, name string) (*ServiceResource, error) {
-	name = strings.TrimSpace(name)
-	if name == "" {
+// Get 从 NexusAuth 服务资源目录按业务键查找服务资源。
+func (c *NexusAuthServiceResourceCatalog) Get(ctx context.Context, key string) (*ServiceResource, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
 		return nil, fmt.Errorf("%w: service_resource is required", ErrInvalidArgument)
 	}
 	resources, err := c.List(ctx)
@@ -160,7 +379,7 @@ func (c *NexusAuthServiceResourceCatalog) Get(ctx context.Context, name string) 
 		return nil, err
 	}
 	for _, resource := range resources {
-		if resource != nil && resource.Name == name {
+		if resource != nil && resource.Key == key {
 			return resource, nil
 		}
 	}
@@ -177,6 +396,7 @@ type nexusAuthServiceResource struct {
 	CreatedAt   time.Time `json:"createdAt"`
 }
 
+// decodeNexusAuthServiceResources 将 NexusAuth 服务资源目录响应解码为业务模型。
 func decodeNexusAuthServiceResources(body []byte) ([]*ServiceResource, error) {
 	var values []nexusAuthServiceResource
 	if err := json.Unmarshal(body, &values); err != nil {
@@ -190,34 +410,20 @@ func decodeNexusAuthServiceResources(body []byte) ([]*ServiceResource, error) {
 	}
 	resources := make([]*ServiceResource, 0, len(values))
 	for _, value := range values {
-		name := strings.TrimSpace(value.Name)
-		if name == "" {
+		key := strings.TrimSpace(value.Name)
+		if key == "" {
 			return nil, fmt.Errorf("decode NexusAuth service-resource directory: resource name is empty")
 		}
+		displayName := strings.TrimSpace(value.DisplayName)
 		resources = append(resources, &ServiceResource{
-			ID: value.ID, Name: name, DisplayName: value.DisplayName, Audience: value.Audience,
-			Description: value.Description, IsActive: value.IsActive, CreatedAt: value.CreatedAt,
+			ID: value.ID, Key: key, Name: displayName, DisplayName: displayName, Audience: value.Audience,
+			Description: value.Description, IsActive: value.IsActive, Source: ServiceResourceSourceNexusAuth, CreatedAt: value.CreatedAt,
 		})
 	}
 	return resources, nil
 }
 
-func serviceResourceValue(serviceResource, application string) string {
-	if value := strings.TrimSpace(serviceResource); value != "" {
-		return value
-	}
-	return strings.TrimSpace(application)
-}
-
-func setServiceResourceScope(serviceResource, application string) (string, error) {
-	serviceResource, application = strings.TrimSpace(serviceResource), strings.TrimSpace(application)
-	if serviceResource != "" && application != "" && serviceResource != application {
-		return "", fmt.Errorf("%w: application and service_resource must identify the same scope", ErrConflict)
-	}
-	value := serviceResourceValue(serviceResource, application)
-	return validateServiceResource(value)
-}
-
+// validateServiceResource 校验服务资源名称非空且不超过平台允许的长度。
 func validateServiceResource(value string) (string, error) {
 	value = strings.TrimSpace(value)
 	if value == "" || len([]rune(value)) > maxServiceResourceLength {

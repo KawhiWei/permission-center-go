@@ -4,8 +4,8 @@ import {
   SERVICE_RESOURCE_CHANGE_EVENT,
   getStoredServiceResource,
   listServiceResources,
-  setStoredServiceResource,
   type ServiceResource,
+  type ServiceResourceSource,
 } from '../../api/permission';
 
 export const getRequestErrorMessage = (error: unknown, fallback: string): string => {
@@ -29,6 +29,7 @@ export const getRequestErrorMessage = (error: unknown, fallback: string): string
 
 type ServiceResourceCatalog = {
   serviceResources: ServiceResource[];
+  serviceResourceCatalogSource: ServiceResourceSource;
   serviceResourcesLoading: boolean;
   serviceResourcesError: string | null;
   reloadServiceResources: () => Promise<void>;
@@ -36,6 +37,7 @@ type ServiceResourceCatalog = {
 
 export const useServiceResourceCatalog = (): ServiceResourceCatalog => {
   const [serviceResources, setServiceResources] = useState<ServiceResource[]>([]);
+  const [serviceResourceCatalogSource, setServiceResourceCatalogSource] = useState<ServiceResourceSource>('local');
   // Keep the cached scope usable until the catalog has been checked.
   const [serviceResourcesLoading, setServiceResourcesLoading] = useState(true);
   const [serviceResourcesError, setServiceResourcesError] = useState<string | null>(null);
@@ -44,7 +46,9 @@ export const useServiceResourceCatalog = (): ServiceResourceCatalog => {
     setServiceResourcesLoading(true);
     setServiceResourcesError(null);
     try {
-      setServiceResources(await listServiceResources());
+      const catalog = await listServiceResources();
+      setServiceResources(catalog.items);
+      setServiceResourceCatalogSource(catalog.source);
     } catch (error) {
       setServiceResources([]);
       setServiceResourcesError(getRequestErrorMessage(error, '加载服务资源列表失败'));
@@ -59,6 +63,7 @@ export const useServiceResourceCatalog = (): ServiceResourceCatalog => {
 
   return {
     serviceResources,
+    serviceResourceCatalogSource,
     serviceResourcesLoading,
     serviceResourcesError,
     reloadServiceResources,
@@ -67,20 +72,6 @@ export const useServiceResourceCatalog = (): ServiceResourceCatalog => {
 
 export const useServiceResourceScope = () => {
   const [serviceResource, setServiceResource] = useState(getStoredServiceResource);
-  const catalog = useServiceResourceCatalog();
-
-  useEffect(() => {
-    if (catalog.serviceResourcesLoading || catalog.serviceResourcesError) {
-      return;
-    }
-
-    if (!serviceResource || !catalog.serviceResources.some((item) => (
-      item.name === serviceResource && item.isActive
-    ))) {
-      setServiceResource('');
-      setStoredServiceResource('');
-    }
-  }, [catalog.serviceResources, catalog.serviceResourcesError, catalog.serviceResourcesLoading, serviceResource]);
 
   useEffect(() => {
     const sync = () => {
@@ -94,10 +85,7 @@ export const useServiceResourceScope = () => {
     };
   }, []);
 
-  return {
-    serviceResource,
-    ...catalog,
-  };
+  return { serviceResource };
 };
 
 export const PageHeader = ({

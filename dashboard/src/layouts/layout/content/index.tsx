@@ -1,14 +1,33 @@
-import { Outlet, useLocation } from 'react-router-dom';
-import { Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import ErrorPage from '../../../components/error';
 import GlobalLoading from '../../../components/global-loading';
 import { setPageLoading } from '../../../page-loading';
+import {
+    findNavigationMenu,
+    resolveMenuComponent,
+    type NavigationMenu,
+} from '../../../router/dynamic-routes';
 
-const PublicContent = () => {
+interface PublicContentProps {
+    menus: NavigationMenu[];
+    navigationLoading: boolean;
+}
+
+const PublicContent = ({ menus, navigationLoading }: PublicContentProps) => {
     const { pathname } = useLocation();
     const contentInnerRef = useRef<HTMLDivElement | null>(null);
     const contentRef = useRef<HTMLDivElement | null>(null);
     const [contentMaxHeight, setContentMaxHeight] = useState<number>();
+    const CurrentPage = useMemo(() => {
+        if (navigationLoading) {
+            return null;
+        }
+
+        const menu = findNavigationMenu(menus, pathname);
+        return menu ? resolveMenuComponent(menu.component) : ErrorPage;
+    }, [menus, navigationLoading, pathname]);
 
     useEffect(() => {
         setPageLoading(false);
@@ -59,7 +78,7 @@ const PublicContent = () => {
         <Suspense fallback={<GlobalLoading height={contentMaxHeight || 320} />}>
             <div className="layout-content-inner" ref={contentInnerRef}>
                 <div className="layout-main-content" ref={contentRef} style={{ maxHeight: contentMaxHeight }}>
-                    <Outlet />
+                    {CurrentPage && <CurrentPage />}
                 </div>
             </div>
 

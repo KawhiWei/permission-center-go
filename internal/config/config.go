@@ -15,16 +15,10 @@ type Config struct {
 	HTTP                   HTTPConfig                   `yaml:"http"`
 	Database               DatabaseConfig               `yaml:"database"`
 	OIDC                   OIDCConfig                   `yaml:"oidc"`
-	ApplicationCatalog     ApplicationCatalogConfig     `yaml:"application_catalog"`
 	ServiceResourceCatalog ServiceResourceCatalogConfig `yaml:"service_resource_catalog"`
 }
-type ApplicationCatalogConfig struct {
-	Source string `yaml:"source"`
-}
 
-// ServiceResourceCatalogConfig controls where permission scope names are
-// resolved. The local provider adapts the existing applications table; the
-// NexusAuth provider only reads its OpenAPI service-resource directory.
+// ServiceResourceCatalogConfig 配置服务资源目录来源和 NexusAuth 连接信息。
 type ServiceResourceCatalogConfig struct {
 	Source                  string `yaml:"source"`
 	NexusAuthBaseURL        string `yaml:"nexusauth_base_url"`
@@ -105,25 +99,13 @@ func Load(path string) (*Config, error) {
 		cfg.HTTP.Addr = value
 	}
 	applyOIDCEnv(&cfg.OIDC)
-	if value := os.Getenv("PERMISSION_CENTER_APPLICATION_CATALOG_SOURCE"); value != "" {
-		cfg.ApplicationCatalog.Source = value
-	}
-	if cfg.ApplicationCatalog.Source == "" {
-		cfg.ApplicationCatalog.Source = "local"
-	}
-	if cfg.ApplicationCatalog.Source != "local" && cfg.ApplicationCatalog.Source != "nexusauth" {
-		return nil, fmt.Errorf("application_catalog.source must be local or nexusauth")
-	}
 	if err := applyServiceResourceCatalogEnv(&cfg.ServiceResourceCatalog); err != nil {
 		return nil, err
 	}
-	if strings.TrimSpace(cfg.ServiceResourceCatalog.Source) == "" {
-		cfg.ServiceResourceCatalog.Source = cfg.ApplicationCatalog.Source
-	}
+	cfg.ServiceResourceCatalog.Source = strings.ToLower(strings.TrimSpace(cfg.ServiceResourceCatalog.Source))
 	if cfg.ServiceResourceCatalog.Source == "" {
 		cfg.ServiceResourceCatalog.Source = "local"
 	}
-	cfg.ServiceResourceCatalog.Source = strings.ToLower(strings.TrimSpace(cfg.ServiceResourceCatalog.Source))
 	if cfg.ServiceResourceCatalog.Source != "local" && cfg.ServiceResourceCatalog.Source != "nexusauth" {
 		return nil, fmt.Errorf("service_resource_catalog.source must be local or nexusauth")
 	}

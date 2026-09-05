@@ -5,7 +5,7 @@ import { ChevronLeftIcon, ChevronRightIcon } from 'tdesign-icons-react';
 import { applyThemeMode, getThemeMode } from '../../theme';
 import { getPageLoading, subscribePageLoading } from '../../page-loading';
 import { useEffect, useMemo, useState, useSyncExternalStore } from 'react';
-import { useLocation, useMatches, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 
 import AvatarComponent from './avatar';
 import GlobalLoading from '../../components/global-loading';
@@ -13,6 +13,11 @@ import LogoComponent from './logo';
 import PublicContent from './content';
 import PublicHeader from './header';
 import SliderMenu from './side';
+import {
+  findNavigationMenu,
+  useDynamicNavigation,
+  type NavigationMenu,
+} from '../../router/dynamic-routes';
 import { DEFAULT_LAYOUT_TAB, getStoredLayoutTabs, LAYOUT_TABS_STORAGE_KEY, type LayoutTabItem } from './tab-storage';
 
 const { Content, Aside, Header } = Layout;
@@ -21,11 +26,15 @@ const { TabPanel } = Tabs;
 const DEFAULT_TAB_PATH = DEFAULT_LAYOUT_TAB.value;
 const DEFAULT_TAB_LABEL = DEFAULT_LAYOUT_TAB.label;
 
+const navigationPaths = (menus: NavigationMenu[]): string[] => (
+  menus.flatMap((menu) => [menu.path, ...navigationPaths(menu.children)])
+);
+
 const PublicLayout = () => {
-  const matches = useMatches();
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const pageLoading = useSyncExternalStore(subscribePageLoading, getPageLoading, getPageLoading);
+  const { menus, loading: navigationLoading, version: navigationVersion } = useDynamicNavigation();
 
   const [collapsed, setCollapsed] = useState(false);
   const [theme, setTheme] = useState<'light' | 'dark'>(() => getThemeMode());
@@ -35,17 +44,24 @@ const PublicLayout = () => {
     window.localStorage.setItem(LAYOUT_TABS_STORAGE_KEY, JSON.stringify(tabs));
   }, [tabs]);
 
+  const defaultTabLabel = useMemo(
+    () => menus.find((menu) => menu.path === DEFAULT_TAB_PATH)?.name || DEFAULT_TAB_LABEL,
+    [menus],
+  );
+
   const currentTabLabel = useMemo(() => {
     if (pathname === DEFAULT_TAB_PATH) {
-      return DEFAULT_TAB_LABEL;
+      return defaultTabLabel;
     }
 
-    const lastRoute = matches[matches.length - 1];
-    const handle = lastRoute?.handle as { name?: string } | undefined;
-    return handle?.name || pathname;
-  }, [matches, pathname]);
+    return findNavigationMenu(menus, pathname)?.name || pathname;
+  }, [defaultTabLabel, menus, pathname]);
 
   useEffect(() => {
+    if (navigationLoading) {
+      return;
+    }
+
     setTabs((prev) => {
       const existing = prev.find((tab) => tab.value === pathname);
       if (existing) {
@@ -64,7 +80,7 @@ const PublicLayout = () => {
 
       const dashboardTab = prev.find((tab) => tab.value === DEFAULT_TAB_PATH) || {
         value: DEFAULT_TAB_PATH,
-        label: DEFAULT_TAB_LABEL,
+        label: defaultTabLabel,
         removable: false,
       };
       const restTabs = prev.filter((tab) => tab.value !== DEFAULT_TAB_PATH);
@@ -75,15 +91,26 @@ const PublicLayout = () => {
 
       return [dashboardTab, ...restTabs, nextTab];
     });
-  }, [currentTabLabel, pathname]);
+  }, [currentTabLabel, defaultTabLabel, navigationLoading, pathname]);
 
   useEffect(() => {
-    const lastRoute = matches[matches.length - 1];
-    const handle = lastRoute?.handle as { name?: string } | undefined;
-    if (handle?.name) {
-      document.title = handle.name;
+    if (navigationLoading) {
+      setTabs([{ ...DEFAULT_LAYOUT_TAB }]);
+      return;
     }
-  }, [matches, pathname])
+
+    const validPaths = new Set([DEFAULT_TAB_PATH, ...navigationPaths(menus)]);
+    setTabs((prev) => {
+      const next = prev.filter((tab) => validPaths.has(tab.value));
+      return next.length > 0 ? next : [{ ...DEFAULT_LAYOUT_TAB, label: defaultTabLabel }];
+    });
+  }, [defaultTabLabel, menus, navigationLoading, navigationVersion]);
+
+  useEffect(() => {
+    if (currentTabLabel) {
+      document.title = currentTabLabel;
+    }
+  }, [currentTabLabel, pathname])
 
   const handleCollapsed = () => {
     setCollapsed((prev) => !prev);
@@ -140,7 +167,7 @@ const PublicLayout = () => {
   return (
 
     <Layout className="layout-container">
-      {pageLoading && <GlobalLoading />}
+      {(pageLoading || navigationLoading) && <GlobalLoading />}
       <Header className="layout-header">
         <div className="layout-header-left">
           <LogoComponent collapse={false} />
@@ -157,7 +184,7 @@ const PublicLayout = () => {
           className={`layout-sider${collapsed ? ' is-collapsed' : ''}`}
         >
           <div className="layout-sider-menu">
-            <SliderMenu collapse={collapsed} />
+            <SliderMenu collapse={collapsed} menus={menus} />
           </div>
           <div className="layout-sider-trigger-bottom" onClick={handleCollapsed}>
             {collapsed ? <ChevronRightIcon /> : <ChevronLeftIcon />}
@@ -185,7 +212,7 @@ const PublicLayout = () => {
                 ))}
               </Tabs>
             </div>
-            <PublicContent />
+            <PublicContent menus={menus} navigationLoading={navigationLoading} />
           </Content>
         </Layout>
       </Layout>

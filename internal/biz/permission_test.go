@@ -2,6 +2,7 @@ package biz
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -9,14 +10,19 @@ import (
 
 type memoryMenuRepo struct{ menus map[uuid.UUID]*Menu }
 
-type memoryUserRoleRepo struct {
-	subject     string
-	application string
-	roleIDs     []string
+type memoryRoleRepo struct {
+	roles   map[string]*Role
+	deleted []string
 }
 
-func (r *memoryUserRoleRepo) ReplaceRoles(_ context.Context, subject, application string, roleIDs []string) error {
-	r.subject, r.application = subject, application
+type memoryUserRoleRepo struct {
+	subject         string
+	serviceResource string
+	roleIDs         []string
+}
+
+func (r *memoryUserRoleRepo) ReplaceRoles(_ context.Context, subject, serviceResource string, roleIDs []string) error {
+	r.subject, r.serviceResource = subject, serviceResource
 	r.roleIDs = append([]string(nil), roleIDs...)
 	return nil
 }
@@ -37,28 +43,90 @@ func (r *memoryMenuRepo) Get(_ context.Context, id uuid.UUID) (*Menu, error) {
 	}
 	return value, nil
 }
-func (r *memoryMenuRepo) ListByApplication(_ context.Context, application string) ([]*Menu, error) {
+func (r *memoryMenuRepo) ListByServiceResource(_ context.Context, serviceResource string) ([]*Menu, error) {
 	values := []*Menu{}
 	for _, value := range r.menus {
-		if value.Application == application {
+		if value.ServiceResource == serviceResource {
 			values = append(values, value)
 		}
 	}
 	return values, nil
 }
+func (r *memoryMenuRepo) Update(_ context.Context, menu *Menu) (*Menu, error) {
+	if _, ok := r.menus[menu.ID]; !ok {
+		return nil, ErrNotFound
+	}
+	r.menus[menu.ID] = menu
+	return menu, nil
+}
+func (r *memoryMenuRepo) SoftDelete(_ context.Context, id uuid.UUID) error {
+	menu, ok := r.menus[id]
+	if !ok {
+		return ErrNotFound
+	}
+	menu.IsDeleted = true
+	menu.Enabled = false
+	return nil
+}
+
+func (r *memoryRoleRepo) Create(_ context.Context, role *Role) (*Role, error) {
+	if role.ID == "" {
+		role.ID = "role-created"
+	}
+	if r.roles == nil {
+		r.roles = map[string]*Role{}
+	}
+	r.roles[role.ID] = role
+	return role, nil
+}
+func (r *memoryRoleRepo) Get(_ context.Context, id string) (*Role, error) {
+	role, ok := r.roles[id]
+	if !ok {
+		return nil, ErrNotFound
+	}
+	return role, nil
+}
+func (r *memoryRoleRepo) ListByServiceResource(_ context.Context, serviceResource string) ([]*Role, error) {
+	roles := make([]*Role, 0)
+	for _, role := range r.roles {
+		if role.ServiceResource == serviceResource && !role.IsDeleted {
+			roles = append(roles, role)
+		}
+	}
+	return roles, nil
+}
+func (r *memoryRoleRepo) Update(_ context.Context, role *Role) (*Role, error) {
+	if _, ok := r.roles[role.ID]; !ok {
+		return nil, ErrNotFound
+	}
+	r.roles[role.ID] = role
+	return role, nil
+}
+func (r *memoryRoleRepo) SoftDelete(_ context.Context, id string) error {
+	role, ok := r.roles[id]
+	if !ok {
+		return ErrNotFound
+	}
+	role.IsDeleted = true
+	role.Enabled = false
+	r.deleted = append(r.deleted, id)
+	return nil
+}
+func (r *memoryRoleRepo) ReplaceMenus(context.Context, string, []uuid.UUID) error { return nil }
+func (r *memoryRoleRepo) MenuIDs(context.Context, string) ([]uuid.UUID, error)    { return nil, nil }
 
 func TestCreateMenuRejectsButtonWithoutMenuParent(t *testing.T) {
 	ctx := context.Background()
 	menus := &memoryMenuRepo{menus: map[uuid.UUID]*Menu{}}
 	service := NewPermissionService(nil, menus)
-	if _, err := service.CreateMenu(ctx, &Menu{Application: "ops", Code: "create", Name: "Create", Type: MenuTypeButton, APIPath: "/v1/items"}); err == nil {
+	if _, err := service.CreateMenu(ctx, &Menu{ServiceResource: "ops", Code: "create", Name: "Create", Type: MenuTypeButton, APIPath: "/v1/items"}); err == nil {
 		t.Fatal("expected invalid root button")
 	}
-	menu, err := service.CreateMenu(ctx, &Menu{Application: "ops", Code: "items", Name: "Items", Type: MenuTypeMenu, Path: "/items"})
+	menu, err := service.CreateMenu(ctx, &Menu{ServiceResource: "ops", Code: "items", Name: "Items", Type: MenuTypeMenu, Path: "/items"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	button, err := service.CreateMenu(ctx, &Menu{Application: "ops", ParentID: &menu.ID, Code: "items:create", Name: "Create", Type: MenuTypeButton, APIPath: "/v1/items", HTTPMethod: "POST"})
+	button, err := service.CreateMenu(ctx, &Menu{ServiceResource: "ops", ParentID: &menu.ID, Code: "items:create", Name: "Create", Type: MenuTypeButton, APIPath: "/v1/items", HTTPMethod: "POST"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,8 +138,8 @@ func TestCreateMenuRejectsButtonWithoutMenuParent(t *testing.T) {
 func TestMenuTreeBuildsHierarchy(t *testing.T) {
 	rootID, childID := uuid.New(), uuid.New()
 	menus := &memoryMenuRepo{menus: map[uuid.UUID]*Menu{
-		rootID:  {ID: rootID, Application: "admin", Type: MenuTypeMenu, Sort: 1},
-		childID: {ID: childID, Application: "admin", ParentID: &rootID, Type: MenuTypeButton, Sort: 2},
+		rootID:  {ID: rootID, ServiceResource: "admin", Type: MenuTypeMenu, Sort: 1},
+		childID: {ID: childID, ServiceResource: "admin", ParentID: &rootID, Type: MenuTypeButton, Sort: 2},
 	}}
 	service := NewPermissionService(nil, menus)
 	tree, err := service.MenuTree(context.Background(), "admin")
@@ -83,14 +151,151 @@ func TestMenuTreeBuildsHierarchy(t *testing.T) {
 	}
 }
 
-func TestReplaceUserRolesValidatesAndPreservesApplicationScope(t *testing.T) {
+func TestUpdateRolePreservesImmutableAndCreationFields(t *testing.T) {
+	roleID := "role-1"
+	roles := &memoryRoleRepo{roles: map[string]*Role{
+		roleID: {
+			BaseFields:      BaseFields{CreatedByID: "creator", CreatedByName: "Creator", UpdatedByID: "old", UpdatedByName: "Old"},
+			ID:              roleID,
+			ServiceResource: "ops",
+			Code:            "old-code",
+			Name:            "Old name",
+			Enabled:         false,
+		},
+	}}
+	ctx := WithAuditActor(context.Background(), AuditActor{ID: "editor", Name: "Editor"})
+	updated, err := NewPermissionService(roles, nil).UpdateRole(ctx, roleID, " new-code ", " New name ", " description ", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.ID != roleID || updated.ServiceResource != "ops" || updated.Code != "new-code" || updated.Name != "New name" || updated.Description != "description" || !updated.Enabled {
+		t.Fatalf("updated role = %#v", updated)
+	}
+	if updated.CreatedByID != "creator" || updated.CreatedByName != "Creator" || updated.UpdatedByID != "editor" || updated.UpdatedByName != "Editor" {
+		t.Fatalf("role audit fields = %#v", updated.BaseFields)
+	}
+}
+
+func TestDeleteRoleValidatesIDAndDelegatesSoftDelete(t *testing.T) {
+	roles := &memoryRoleRepo{roles: map[string]*Role{"role-1": {ID: "role-1", ServiceResource: "ops", Enabled: true}}}
+	if err := NewPermissionService(roles, nil).DeleteRole(context.Background(), " role-1 "); err != nil {
+		t.Fatal(err)
+	}
+	if len(roles.deleted) != 1 || roles.deleted[0] != "role-1" || !roles.roles["role-1"].IsDeleted {
+		t.Fatalf("deleted roles = %#v", roles.deleted)
+	}
+	if err := NewPermissionService(roles, nil).DeleteRole(context.Background(), " "); !errors.Is(err, ErrInvalidArgument) {
+		t.Fatalf("invalid role id error = %v", err)
+	}
+}
+
+func TestUpdateMenuPreservesImmutableAndCreationFields(t *testing.T) {
+	parentID, menuID, otherParentID := uuid.New(), uuid.New(), uuid.New()
+	menus := &memoryMenuRepo{menus: map[uuid.UUID]*Menu{
+		menuID: {
+			BaseFields:      BaseFields{CreatedByID: "creator", CreatedByName: "Creator", UpdatedByID: "old", UpdatedByName: "Old"},
+			ID:              menuID,
+			ServiceResource: "ops",
+			ParentID:        &parentID,
+			Type:            MenuTypeButton,
+			Code:            "old-code",
+			Name:            "Old name",
+			APIPath:         "/old",
+			Enabled:         true,
+		},
+	}}
+	ctx := WithAuditActor(context.Background(), AuditActor{ID: "editor", Name: "Editor"})
+	updated, err := NewPermissionService(nil, menus).UpdateMenu(ctx, &Menu{
+		ID:              menuID,
+		ServiceResource: "other-scope",
+		ParentID:        &otherParentID,
+		Type:            MenuTypeMenu,
+		Code:            " new-code ",
+		Name:            " New name ",
+		Description:     " description ",
+		Path:            "/new",
+		Component:       "NewPage",
+		APIPath:         "/new",
+		HTTPMethod:      "POST",
+		Icon:            "new-icon",
+		Sort:            8,
+		Enabled:         false,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.ID != menuID || updated.ServiceResource != "ops" || updated.ParentID == nil || *updated.ParentID != parentID || updated.Type != MenuTypeButton {
+		t.Fatalf("immutable menu fields = %#v", updated)
+	}
+	if updated.Code != "new-code" || updated.Name != "New name" || updated.Description != "description" || updated.Path != "/new" || updated.Component != "NewPage" || updated.APIPath != "/new" || updated.HTTPMethod != "POST" || updated.Icon != "new-icon" || updated.Sort != 8 || updated.Enabled {
+		t.Fatalf("mutable menu fields = %#v", updated)
+	}
+	if updated.CreatedByID != "creator" || updated.CreatedByName != "Creator" || updated.UpdatedByID != "editor" || updated.UpdatedByName != "Editor" {
+		t.Fatalf("menu audit fields = %#v", updated.BaseFields)
+	}
+}
+
+func TestDeleteMenuRejectsUndeletedChild(t *testing.T) {
+	parentID, childID := uuid.New(), uuid.New()
+	menus := &memoryMenuRepo{menus: map[uuid.UUID]*Menu{
+		parentID: {ID: parentID, ServiceResource: "ops", Type: MenuTypeMenu, Enabled: true},
+		childID:  {ID: childID, ServiceResource: "ops", ParentID: &parentID, Type: MenuTypeButton, Enabled: false},
+	}}
+	if err := NewPermissionService(nil, menus).DeleteMenu(context.Background(), parentID); !errors.Is(err, ErrConflict) {
+		t.Fatalf("child conflict error = %v", err)
+	}
+	if menus.menus[parentID].IsDeleted {
+		t.Fatal("parent was deleted despite undeleted child")
+	}
+}
+
+func TestDeleteMenuSoftDeletesLeaf(t *testing.T) {
+	menuID := uuid.New()
+	menus := &memoryMenuRepo{menus: map[uuid.UUID]*Menu{
+		menuID: {ID: menuID, ServiceResource: "ops", Type: MenuTypeMenu, Enabled: true},
+	}}
+	if err := NewPermissionService(nil, menus).DeleteMenu(context.Background(), menuID); err != nil {
+		t.Fatal(err)
+	}
+	if !menus.menus[menuID].IsDeleted || menus.menus[menuID].Enabled {
+		t.Fatalf("deleted menu = %#v", menus.menus[menuID])
+	}
+}
+
+func TestListIncludesDisabledRecords(t *testing.T) {
+	roleID := "disabled-role"
+	roles := &memoryRoleRepo{roles: map[string]*Role{
+		roleID: {ID: roleID, ServiceResource: "ops", Enabled: false},
+	}}
+	listedRoles, err := NewPermissionService(roles, nil).ListRoles(context.Background(), "ops")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(listedRoles) != 1 || listedRoles[0].ID != roleID || listedRoles[0].Enabled {
+		t.Fatalf("listed roles = %#v", listedRoles)
+	}
+
+	menuID := uuid.New()
+	menus := &memoryMenuRepo{menus: map[uuid.UUID]*Menu{
+		menuID: {ID: menuID, ServiceResource: "ops", Type: MenuTypeMenu, Enabled: false},
+	}}
+	tree, err := NewPermissionService(nil, menus).MenuTree(context.Background(), "ops")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tree) != 1 || tree[0].ID != menuID || tree[0].Enabled {
+		t.Fatalf("listed menu tree = %#v", tree)
+	}
+}
+
+func TestReplaceUserRolesValidatesAndPreservesServiceResourceScope(t *testing.T) {
 	userRoles := &memoryUserRoleRepo{}
 	service := NewPermissionService(nil, nil, userRoles)
 	if err := service.ReplaceUserRoles(context.Background(), " nexus-user-1 ", "admin", []string{"operator", "auditor"}); err != nil {
 		t.Fatal(err)
 	}
-	if userRoles.subject != "nexus-user-1" || userRoles.application != "admin" {
-		t.Fatalf("stored scope = %q / %q", userRoles.subject, userRoles.application)
+	if userRoles.subject != "nexus-user-1" || userRoles.serviceResource != "admin" {
+		t.Fatalf("stored scope = %q / %q", userRoles.subject, userRoles.serviceResource)
 	}
 	if err := service.ReplaceUserRoles(context.Background(), "nexus-user-1", "admin", []string{"operator", "operator"}); err == nil {
 		t.Fatal("expected duplicate role validation error")

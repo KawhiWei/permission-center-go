@@ -8,6 +8,7 @@ import (
 	"github.com/luck/permission-center-go/internal/biz"
 )
 
+// writeJSON 以统一成功包裹格式写入 JSON 响应。
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	writeRawJSON(w, status, map[string]any{
 		"success":      true,
@@ -17,12 +18,14 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 	})
 }
 
+// writeRawJSON 写入指定状态码和内容的原始 JSON 响应。
 func writeRawJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
 }
 
+// writeError 将业务错误映射为统一的 HTTP 错误响应。
 func writeError(w http.ResponseWriter, err error) {
 	status := http.StatusInternalServerError
 	switch {
@@ -43,6 +46,7 @@ func writeError(w http.ResponseWriter, err error) {
 	})
 }
 
+// apiErrorCode 将业务错误映射为 API 错误码。
 func apiErrorCode(err error) string {
 	switch {
 	case errors.Is(err, biz.ErrInvalidArgument):
