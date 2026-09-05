@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -111,8 +112,22 @@ func TestServiceResourceCRUDHandlers(t *testing.T) {
 
 	listResponse := httptest.NewRecorder()
 	server.ServeHTTP(listResponse, httptest.NewRequest(http.MethodGet, "/v1/service-resources", nil))
-	if listResponse.Code != http.StatusOK || !strings.Contains(listResponse.Body.String(), `"source":"local"`) || !strings.Contains(listResponse.Body.String(), `"key":"orders"`) {
+	var listEnvelope struct {
+		Result struct {
+			Items    []*biz.ServiceResource `json:"items"`
+			Writable bool                   `json:"writable"`
+			Source   json.RawMessage        `json:"source"`
+		} `json:"result"`
+	}
+	if err := json.Unmarshal(listResponse.Body.Bytes(), &listEnvelope); err != nil {
+		t.Fatalf("list body = %s: %v", listResponse.Body.String(), err)
+	}
+	listBody := listEnvelope.Result
+	if listResponse.Code != http.StatusOK || len(listBody.Items) != 1 || listBody.Items[0].Key != "orders" || !listBody.Writable {
 		t.Fatalf("list status = %d body=%s", listResponse.Code, listResponse.Body.String())
+	}
+	if listBody.Source != nil {
+		t.Fatalf("list response unexpectedly contains top-level source: %s", listResponse.Body.String())
 	}
 
 	getResponse := httptest.NewRecorder()

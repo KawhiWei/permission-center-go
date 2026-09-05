@@ -4,7 +4,7 @@
 
 ## 模型
 
-- `service_resources`：权限中心持久化的服务资源目录，`resource_key` 是统一隔离键。`source=local` 的记录由本服务维护，`source=nexusauth` 的记录从 NexusAuth 同步且只读；同 key 的本地记录不会被远程同步覆盖。
+- `service_resources`：权限中心在 `local` 模式下持久化的服务资源，`resource_key` 是统一隔离键。`nexusauth` 模式由 Go 后端直接读取 NexusAuth 开放 API，不将远程服务资源写入本地表。
 - `authorization_api_endpoints`：服务资源下的 API 接口目录，通过 `service_resource` 外键关联 `service_resources.resource_key`，按“服务资源 + Method + Path 模板”去重。
 - `role`：角色 ID 使用 `VARCHAR(80)` 字符串，角色编码在同一服务资源内唯一。
 - `menu`：同一服务资源内的菜单与按钮树。`type=menu` 用于导航节点；`type=button` 用于页面操作，必须挂在菜单下，并提供受保护的 `api_path`（可选 `http_method`）。菜单项编码在同一服务资源内唯一。
@@ -20,7 +20,7 @@ Dashboard 左侧导航和受保护页面路由均由当前服务资源的 `/v1/m
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| POST/GET | `/v1/service-resources` | 创建本地服务资源、获取服务资源目录 |
+| POST/GET | `/v1/service-resources` | 创建本地服务资源、获取当前后端配置的服务资源 |
 | GET | `/v1/service-resources/{key}` | 按唯一 key 获取单个服务资源 |
 | PUT/DELETE | `/v1/service-resources/{key}` | 按唯一 key 更新或软删除本地服务资源；NexusAuth 模式只读 |
 | POST/GET | `/v1/roles` | 创建角色、按 `service_resource` 查询角色 |
@@ -50,15 +50,15 @@ Swagger 导入支持 Swagger 2.0 和 OpenAPI 3.x 的 JSON、YAML 及常见 Swagg
 
 ## NexusAuth 接入
 
-服务资源默认使用 `local` 模式。需要同步 NexusAuth 服务资源时，权限中心通过 NexusAuth 的 `GET /openapi/v1/service-resources` 获取目录，并保存为 `source=nexusauth` 的只读记录。先在 NexusAuth Workbench 创建 `targetType=service_resource` 的开放 API 凭据，再仅在权限中心后端配置来源和明文 token：
+服务资源默认使用 `local` 模式，Go 后端直接读取本地数据库。配置为 `nexusauth` 时，Go 后端在请求期间通过 NexusAuth 的 `GET /openapi/v1/service-resources` 获取服务资源，不在本地数据库中同步或缓存远程记录。先在 NexusAuth Workbench 创建 `targetType=service_resource` 的开放 API 凭据，再仅在权限中心后端配置来源和明文 token：
 
 ```dotenv
-PERMISSION_CENTER_SERVICE_RESOURCE_CATALOG_SOURCE=nexusauth
-PERMISSION_CENTER_SERVICE_RESOURCE_CATALOG_NEXUSAUTH_BASE_URL=http://host.docker.internal:5100
-PERMISSION_CENTER_SERVICE_RESOURCE_CATALOG_API_KEY=<service_resource-open-api-token>
+PERMISSION_CENTER_SERVICE_RESOURCE_SOURCE=nexusauth
+PERMISSION_CENTER_SERVICE_RESOURCE_NEXUSAUTH_BASE_URL=http://host.docker.internal:5100
+PERMISSION_CENTER_SERVICE_RESOURCE_API_KEY=<service_resource-open-api-token>
 ```
 
-该 token 不是 OIDC Client Secret，不能写入前端、接口响应或提交到 Git。环境变量决定当前唯一目录来源：`local` 模式只返回本地记录并允许 CRUD，`nexusauth` 模式只同步并返回 NexusAuth 记录且禁止本地写入。两类记录保存在同一张表并通过 `source` 区分。服务资源接口显式返回唯一 `key`，Swagger 导入请求中的 `service_resource` 必须填写该 key。登录后的用户必须先选择服务资源，角色、菜单、API 端点和用户角色绑定页面才能进入。
+该 token 不是 OIDC Client Secret，不能写入前端、接口响应或提交到 Git。环境变量由 Go 后端读取并决定唯一数据来源：`local` 模式只返回本地记录并允许 CRUD，`nexusauth` 模式直接返回 NexusAuth 开放 API 数据并禁止本地写入。前端只消费后端返回的服务资源和 `writable` 能力，不读取环境变量，也不选择数据来源。服务资源接口显式返回唯一 `key`，Swagger 导入请求中的 `service_resource` 必须填写该 key。登录后的用户必须先选择服务资源，角色、菜单、API 端点和用户角色绑定页面才能进入。
 
 在 NexusAuth 中自行创建客户端和服务资源并完成绑定。开发环境建议登记：
 

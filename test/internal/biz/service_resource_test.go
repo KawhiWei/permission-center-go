@@ -48,10 +48,13 @@ func TestNexusAuthServiceResourceCatalogList(t *testing.T) {
 }
 
 type memoryServiceResourceRepository struct {
-	values map[string]*ServiceResource
+	values     map[string]*ServiceResource
+	readCalls  int
+	writeCalls int
 }
 
 func (r *memoryServiceResourceRepository) Create(_ context.Context, resource *ServiceResource) (*ServiceResource, error) {
+	r.writeCalls++
 	if _, exists := r.values[resource.Key]; exists {
 		return nil, ErrAlreadyExists
 	}
@@ -65,6 +68,7 @@ func (r *memoryServiceResourceRepository) Create(_ context.Context, resource *Se
 }
 
 func (r *memoryServiceResourceRepository) Get(_ context.Context, key string) (*ServiceResource, error) {
+	r.readCalls++
 	value, exists := r.values[key]
 	if !exists || value == nil {
 		return nil, ErrNotFound
@@ -73,6 +77,7 @@ func (r *memoryServiceResourceRepository) Get(_ context.Context, key string) (*S
 }
 
 func (r *memoryServiceResourceRepository) List(_ context.Context) ([]*ServiceResource, error) {
+	r.readCalls++
 	values := make([]*ServiceResource, 0, len(r.values))
 	for _, value := range r.values {
 		if value != nil {
@@ -83,6 +88,7 @@ func (r *memoryServiceResourceRepository) List(_ context.Context) ([]*ServiceRes
 }
 
 func (r *memoryServiceResourceRepository) GetBySource(_ context.Context, key, source string) (*ServiceResource, error) {
+	r.readCalls++
 	value, exists := r.values[key]
 	if !exists || value == nil || value.Source != source {
 		return nil, ErrNotFound
@@ -91,6 +97,7 @@ func (r *memoryServiceResourceRepository) GetBySource(_ context.Context, key, so
 }
 
 func (r *memoryServiceResourceRepository) ListBySource(_ context.Context, source string) ([]*ServiceResource, error) {
+	r.readCalls++
 	values := make([]*ServiceResource, 0, len(r.values))
 	for _, value := range r.values {
 		if value != nil && value.Source == source {
@@ -101,6 +108,7 @@ func (r *memoryServiceResourceRepository) ListBySource(_ context.Context, source
 }
 
 func (r *memoryServiceResourceRepository) Update(_ context.Context, resource *ServiceResource) (*ServiceResource, error) {
+	r.writeCalls++
 	value, exists := r.values[resource.Key]
 	if !exists {
 		return nil, ErrNotFound
@@ -114,6 +122,7 @@ func (r *memoryServiceResourceRepository) Update(_ context.Context, resource *Se
 }
 
 func (r *memoryServiceResourceRepository) SoftDelete(_ context.Context, key string) error {
+	r.writeCalls++
 	value, exists := r.values[key]
 	if !exists {
 		return ErrNotFound
@@ -124,6 +133,7 @@ func (r *memoryServiceResourceRepository) SoftDelete(_ context.Context, key stri
 }
 
 func (r *memoryServiceResourceRepository) UpsertNexusAuth(_ context.Context, resource *ServiceResource) (*ServiceResource, error) {
+	r.writeCalls++
 	if current, exists := r.values[resource.Key]; exists && current.Source == ServiceResourceSourceLocal {
 		return cloneServiceResource(current), nil
 	}
@@ -134,8 +144,9 @@ func (r *memoryServiceResourceRepository) UpsertNexusAuth(_ context.Context, res
 }
 
 type memoryRemoteServiceResourceCatalog struct {
-	values []*ServiceResource
-	called bool
+	values    []*ServiceResource
+	called    bool
+	getCalled bool
 }
 
 func (r *memoryRemoteServiceResourceCatalog) List(context.Context) ([]*ServiceResource, error) {
@@ -144,6 +155,7 @@ func (r *memoryRemoteServiceResourceCatalog) List(context.Context) ([]*ServiceRe
 }
 
 func (r *memoryRemoteServiceResourceCatalog) Get(_ context.Context, key string) (*ServiceResource, error) {
+	r.getCalled = true
 	for _, value := range r.values {
 		if value != nil && value.Key == key {
 			return value, nil
@@ -182,7 +194,7 @@ func TestServiceResourceCatalogLocalReadsRepositoryOnly(t *testing.T) {
 	}
 }
 
-func TestServiceResourceCatalogNexusAuthSyncPreservesLocalRecord(t *testing.T) {
+func TestServiceResourceCatalogNexusAuthReadsRemoteOnly(t *testing.T) {
 	repository := &memoryServiceResourceRepository{values: map[string]*ServiceResource{
 		"local": {Key: "local", Name: "local name", Source: ServiceResourceSourceLocal, DisplayName: "local name", IsActive: true},
 	}}
@@ -195,11 +207,11 @@ func TestServiceResourceCatalogNexusAuthSyncPreservesLocalRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 	values, err := catalog.List(context.Background())
-	if err != nil || len(values) != 1 || values[0].Key != "remote" {
-		t.Fatalf("synced values = %#v, %v", values, err)
+	if err != nil || len(values) != 2 {
+		t.Fatalf("remote values = %#v, %v", values, err)
 	}
-	if _, err := catalog.Get(context.Background(), "local"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("nexusauth catalog returned local resource: %v", err)
+	if values[0].Source != ServiceResourceSourceNexusAuth || values[1].Source != ServiceResourceSourceNexusAuth {
+		t.Fatalf("remote resource sources = %#v", values)
 	}
 	remoteValue, err := catalog.Get(context.Background(), "remote")
 	if err != nil {
@@ -210,6 +222,33 @@ func TestServiceResourceCatalogNexusAuthSyncPreservesLocalRecord(t *testing.T) {
 	}
 	if !remote.called {
 		t.Fatal("nexusauth catalog did not call remote directory")
+	}
+	if !remote.getCalled {
+		t.Fatal("nexusauth catalog did not call remote get")
+	}
+	if repository.readCalls != 0 || repository.writeCalls != 0 {
+		t.Fatalf("nexusauth repository calls = reads:%d writes:%d", repository.readCalls, repository.writeCalls)
+	}
+	if value := repository.values["local"]; value.DisplayName != "local name" || value.Source != ServiceResourceSourceLocal {
+		t.Fatalf("local repository record changed = %#v", value)
+	}
+}
+
+func TestServiceResourceWritableBySource(t *testing.T) {
+	repository := &memoryServiceResourceRepository{values: map[string]*ServiceResource{}}
+	local, err := NewServiceResourceCatalog(repository, nil, "LOCAL")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !local.Writable() {
+		t.Fatal("local service resource should be writable")
+	}
+	remote, err := NewServiceResourceCatalog(repository, &memoryRemoteServiceResourceCatalog{}, "NEXUSAUTH")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if remote.Writable() {
+		t.Fatal("nexusauth service resource should be read-only")
 	}
 }
 

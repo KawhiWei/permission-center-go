@@ -4,11 +4,11 @@ database:
   url: "postgres://postgres:postgres@localhost:55433/permission_center?sslmode=disable"
   max_conns: 10
   min_conns: 2
-service_resource_catalog:
+service_resource:
   source: "local"
   nexusauth_base_url: "http://localhost:5100"
   # Configure a targetType=service_resource Open API credential through
-  # PERMISSION_CENTER_SERVICE_RESOURCE_CATALOG_API_KEY in production.
+  # PERMISSION_CENTER_SERVICE_RESOURCE_API_KEY in production.
   api_key: ""
   timeout: "5s"
 oidc:

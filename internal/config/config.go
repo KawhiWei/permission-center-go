@@ -12,14 +12,14 @@ import (
 )
 
 type Config struct {
-	HTTP                   HTTPConfig                   `yaml:"http"`
-	Database               DatabaseConfig               `yaml:"database"`
-	OIDC                   OIDCConfig                   `yaml:"oidc"`
-	ServiceResourceCatalog ServiceResourceCatalogConfig `yaml:"service_resource_catalog"`
+	HTTP            HTTPConfig            `yaml:"http"`
+	Database        DatabaseConfig        `yaml:"database"`
+	OIDC            OIDCConfig            `yaml:"oidc"`
+	ServiceResource ServiceResourceConfig `yaml:"service_resource"`
 }
 
-// ServiceResourceCatalogConfig 配置服务资源目录来源和 NexusAuth 连接信息。
-type ServiceResourceCatalogConfig struct {
+// ServiceResourceConfig 配置服务资源来源和 NexusAuth 连接信息。
+type ServiceResourceConfig struct {
 	Source                  string `yaml:"source"`
 	NexusAuthBaseURL        string `yaml:"nexusauth_base_url"`
 	NexusAuthOpenAPIBaseURL string `yaml:"nexusauth_openapi_base_url"`
@@ -29,21 +29,21 @@ type ServiceResourceCatalogConfig struct {
 	TimeoutSeconds          int    `yaml:"timeout_seconds"`
 }
 
-func (c ServiceResourceCatalogConfig) BaseURL() string {
+func (c ServiceResourceConfig) BaseURL() string {
 	if strings.TrimSpace(c.NexusAuthOpenAPIBaseURL) != "" {
 		return strings.TrimSpace(c.NexusAuthOpenAPIBaseURL)
 	}
 	return strings.TrimSpace(c.NexusAuthBaseURL)
 }
 
-func (c ServiceResourceCatalogConfig) Credential() string {
+func (c ServiceResourceConfig) Credential() string {
 	if strings.TrimSpace(c.OpenCredential) != "" {
 		return strings.TrimSpace(c.OpenCredential)
 	}
 	return strings.TrimSpace(c.APIKey)
 }
 
-func (c ServiceResourceCatalogConfig) TimeoutDuration() (time.Duration, error) {
+func (c ServiceResourceConfig) TimeoutDuration() (time.Duration, error) {
 	if c.TimeoutSeconds > 0 {
 		return time.Duration(c.TimeoutSeconds) * time.Second, nil
 	}
@@ -52,7 +52,7 @@ func (c ServiceResourceCatalogConfig) TimeoutDuration() (time.Duration, error) {
 	}
 	duration, err := time.ParseDuration(strings.TrimSpace(c.Timeout))
 	if err != nil || duration <= 0 {
-		return 0, fmt.Errorf("service_resource_catalog.timeout must be a positive duration")
+		return 0, fmt.Errorf("service_resource.timeout must be a positive duration")
 	}
 	return duration, nil
 }
@@ -99,25 +99,25 @@ func Load(path string) (*Config, error) {
 		cfg.HTTP.Addr = value
 	}
 	applyOIDCEnv(&cfg.OIDC)
-	if err := applyServiceResourceCatalogEnv(&cfg.ServiceResourceCatalog); err != nil {
+	if err := applyServiceResourceEnv(&cfg.ServiceResource); err != nil {
 		return nil, err
 	}
-	cfg.ServiceResourceCatalog.Source = strings.ToLower(strings.TrimSpace(cfg.ServiceResourceCatalog.Source))
-	if cfg.ServiceResourceCatalog.Source == "" {
-		cfg.ServiceResourceCatalog.Source = "local"
+	cfg.ServiceResource.Source = strings.ToLower(strings.TrimSpace(cfg.ServiceResource.Source))
+	if cfg.ServiceResource.Source == "" {
+		cfg.ServiceResource.Source = "local"
 	}
-	if cfg.ServiceResourceCatalog.Source != "local" && cfg.ServiceResourceCatalog.Source != "nexusauth" {
-		return nil, fmt.Errorf("service_resource_catalog.source must be local or nexusauth")
+	if cfg.ServiceResource.Source != "local" && cfg.ServiceResource.Source != "nexusauth" {
+		return nil, fmt.Errorf("service_resource.source must be local or nexusauth")
 	}
-	if _, err := cfg.ServiceResourceCatalog.TimeoutDuration(); err != nil {
+	if _, err := cfg.ServiceResource.TimeoutDuration(); err != nil {
 		return nil, err
 	}
-	if cfg.ServiceResourceCatalog.Source == "nexusauth" {
-		if err := validateHTTPURL(cfg.ServiceResourceCatalog.BaseURL(), "service_resource_catalog.nexusauth_base_url"); err != nil {
+	if cfg.ServiceResource.Source == "nexusauth" {
+		if err := validateHTTPURL(cfg.ServiceResource.BaseURL(), "service_resource.nexusauth_base_url"); err != nil {
 			return nil, err
 		}
-		if cfg.ServiceResourceCatalog.Credential() == "" {
-			return nil, fmt.Errorf("service_resource_catalog.api_key or service_resource_catalog.open_credential is required when source is nexusauth")
+		if cfg.ServiceResource.Credential() == "" {
+			return nil, fmt.Errorf("service_resource.api_key or service_resource.open_credential is required when source is nexusauth")
 		}
 	}
 	if len(cfg.OIDC.Scopes) == 0 {
@@ -135,29 +135,29 @@ func Load(path string) (*Config, error) {
 	return &cfg, nil
 }
 
-func applyServiceResourceCatalogEnv(cfg *ServiceResourceCatalogConfig) error {
-	if value := os.Getenv("PERMISSION_CENTER_SERVICE_RESOURCE_CATALOG_SOURCE"); value != "" {
+func applyServiceResourceEnv(cfg *ServiceResourceConfig) error {
+	if value := os.Getenv("PERMISSION_CENTER_SERVICE_RESOURCE_SOURCE"); value != "" {
 		cfg.Source = value
 	}
-	if value := os.Getenv("PERMISSION_CENTER_SERVICE_RESOURCE_CATALOG_NEXUSAUTH_BASE_URL"); value != "" {
+	if value := os.Getenv("PERMISSION_CENTER_SERVICE_RESOURCE_NEXUSAUTH_BASE_URL"); value != "" {
 		cfg.NexusAuthBaseURL = value
 	}
-	if value := os.Getenv("PERMISSION_CENTER_SERVICE_RESOURCE_CATALOG_NEXUSAUTH_OPENAPI_BASE_URL"); value != "" {
+	if value := os.Getenv("PERMISSION_CENTER_SERVICE_RESOURCE_NEXUSAUTH_OPENAPI_BASE_URL"); value != "" {
 		cfg.NexusAuthOpenAPIBaseURL = value
 	}
-	if value := os.Getenv("PERMISSION_CENTER_SERVICE_RESOURCE_CATALOG_API_KEY"); value != "" {
+	if value := os.Getenv("PERMISSION_CENTER_SERVICE_RESOURCE_API_KEY"); value != "" {
 		cfg.APIKey = value
 	}
-	if value := os.Getenv("PERMISSION_CENTER_SERVICE_RESOURCE_CATALOG_OPEN_CREDENTIAL"); value != "" {
+	if value := os.Getenv("PERMISSION_CENTER_SERVICE_RESOURCE_OPEN_CREDENTIAL"); value != "" {
 		cfg.OpenCredential = value
 	}
-	if value := os.Getenv("PERMISSION_CENTER_SERVICE_RESOURCE_CATALOG_TIMEOUT"); value != "" {
+	if value := os.Getenv("PERMISSION_CENTER_SERVICE_RESOURCE_TIMEOUT"); value != "" {
 		cfg.Timeout = value
 	}
-	if value := os.Getenv("PERMISSION_CENTER_SERVICE_RESOURCE_CATALOG_TIMEOUT_SECONDS"); value != "" {
+	if value := os.Getenv("PERMISSION_CENTER_SERVICE_RESOURCE_TIMEOUT_SECONDS"); value != "" {
 		parsed, err := strconv.Atoi(strings.TrimSpace(value))
 		if err != nil || parsed <= 0 {
-			return fmt.Errorf("service_resource_catalog.timeout_seconds must be a positive integer")
+			return fmt.Errorf("service_resource.timeout_seconds must be a positive integer")
 		}
 		cfg.TimeoutSeconds = parsed
 	}

@@ -16,7 +16,7 @@ http:
   addr: ":8080"
 database:
   url: "postgres://postgres:postgres@localhost:55433/permission_center?sslmode=disable"
-service_resource_catalog:
+service_resource:
   source: nexusauth
   nexusauth_base_url: "http://nexus-auth:5100"
   api_key: "directory-token"
@@ -60,7 +60,7 @@ func TestOIDCValidateBackchannelAuthority(t *testing.T) {
 	}
 }
 
-func TestLoadServiceResourceCatalogFromEnvironment(t *testing.T) {
+func TestLoadServiceResourceFromEnvironment(t *testing.T) {
 	clearConfigEnv(t)
 	configPath := filepath.Join(t.TempDir(), "app.yaml")
 	contents := []byte(`
@@ -68,7 +68,7 @@ http:
   addr: ":8080"
 database:
   url: "postgres://postgres:postgres@localhost:55433/permission_center?sslmode=disable"
-service_resource_catalog:
+service_resource:
   source: nexusauth
   nexusauth_base_url: "http://yaml-nexus-auth:5100"
   api_key: "yaml-token"
@@ -79,30 +79,31 @@ oidc:
 	if err := os.WriteFile(configPath, contents, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PERMISSION_CENTER_SERVICE_RESOURCE_CATALOG_NEXUSAUTH_BASE_URL", "http://nexus-auth:5100")
-	t.Setenv("PERMISSION_CENTER_SERVICE_RESOURCE_CATALOG_API_KEY", "directory-token")
-	t.Setenv("PERMISSION_CENTER_SERVICE_RESOURCE_CATALOG_TIMEOUT", "1500ms")
+	t.Setenv("PERMISSION_CENTER_SERVICE_RESOURCE_SOURCE", "NEXUSAUTH")
+	t.Setenv("PERMISSION_CENTER_SERVICE_RESOURCE_NEXUSAUTH_BASE_URL", "http://nexus-auth:5100")
+	t.Setenv("PERMISSION_CENTER_SERVICE_RESOURCE_API_KEY", "directory-token")
+	t.Setenv("PERMISSION_CENTER_SERVICE_RESOURCE_TIMEOUT", "1500ms")
 
 	cfg, err := Load(configPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.ServiceResourceCatalog.Source != "nexusauth" || cfg.ServiceResourceCatalog.BaseURL() != "http://nexus-auth:5100" || cfg.ServiceResourceCatalog.Credential() != "directory-token" {
-		t.Fatalf("service-resource catalog = %#v", cfg.ServiceResourceCatalog)
+	if cfg.ServiceResource.Source != "nexusauth" || cfg.ServiceResource.BaseURL() != "http://nexus-auth:5100" || cfg.ServiceResource.Credential() != "directory-token" {
+		t.Fatalf("service-resource config = %#v", cfg.ServiceResource)
 	}
-	duration, err := cfg.ServiceResourceCatalog.TimeoutDuration()
+	duration, err := cfg.ServiceResource.TimeoutDuration()
 	if err != nil || duration != 1500*time.Millisecond {
 		t.Fatalf("timeout = %v, %v", duration, err)
 	}
 }
 
-func TestLoadRejectsNexusAuthServiceResourceCatalogWithoutCredential(t *testing.T) {
+func TestLoadRejectsNexusAuthServiceResourceWithoutCredential(t *testing.T) {
 	clearConfigEnv(t)
 	configPath := filepath.Join(t.TempDir(), "app.yaml")
 	contents := []byte(`
 http: {addr: ":8080"}
 database: {url: "postgres://postgres:postgres@localhost:55433/permission_center?sslmode=disable"}
-service_resource_catalog:
+service_resource:
   source: nexusauth
   nexusauth_base_url: "http://nexus-auth:5100"
 oidc: {enabled: false}
@@ -115,7 +116,7 @@ oidc: {enabled: false}
 	}
 }
 
-func TestLoadDefaultsServiceResourceCatalogToLocal(t *testing.T) {
+func TestLoadDefaultsServiceResourceToLocal(t *testing.T) {
 	clearConfigEnv(t)
 	configPath := filepath.Join(t.TempDir(), "app.yaml")
 	contents := []byte(`
@@ -130,35 +131,35 @@ oidc: {enabled: false}
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.ServiceResourceCatalog.Source != "local" {
-		t.Fatalf("default service-resource source = %q", cfg.ServiceResourceCatalog.Source)
+	if cfg.ServiceResource.Source != "local" {
+		t.Fatalf("default service-resource source = %q", cfg.ServiceResource.Source)
 	}
 }
 
-func TestLoadRejectsUnsupportedServiceResourceCatalogSource(t *testing.T) {
+func TestLoadRejectsUnsupportedServiceResourceSource(t *testing.T) {
 	clearConfigEnv(t)
 	configPath := filepath.Join(t.TempDir(), "app.yaml")
 	contents := []byte(`
 http: {addr: ":8080"}
 database: {url: "postgres://postgres:postgres@localhost:55433/permission_center?sslmode=disable"}
-service_resource_catalog: {source: unsupported-catalog}
+service_resource: {source: unsupported}
 oidc: {enabled: false}
 `)
 	if err := os.WriteFile(configPath, contents, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Load(configPath); err == nil || !strings.Contains(err.Error(), "service_resource_catalog.source must be local or nexusauth") {
+	if _, err := Load(configPath); err == nil || !strings.Contains(err.Error(), "service_resource.source must be local or nexusauth") {
 		t.Fatalf("unsupported source error = %v", err)
 	}
 }
 
-func TestLoadRejectsInvalidServiceResourceCatalogTimeoutSeconds(t *testing.T) {
+func TestLoadRejectsInvalidServiceResourceTimeoutSeconds(t *testing.T) {
 	clearConfigEnv(t)
 	configPath := filepath.Join(t.TempDir(), "app.yaml")
 	contents := []byte(`
 http: {addr: ":8080"}
 database: {url: "postgres://postgres:postgres@localhost:55433/permission_center?sslmode=disable"}
-service_resource_catalog:
+service_resource:
   nexusauth_base_url: "http://nexus-auth:5100"
   api_key: "directory-token"
 oidc: {enabled: false}
@@ -166,7 +167,7 @@ oidc: {enabled: false}
 	if err := os.WriteFile(configPath, contents, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	t.Setenv("PERMISSION_CENTER_SERVICE_RESOURCE_CATALOG_TIMEOUT_SECONDS", "not-a-number")
+	t.Setenv("PERMISSION_CENTER_SERVICE_RESOURCE_TIMEOUT_SECONDS", "not-a-number")
 	if _, err := Load(configPath); err == nil || !strings.Contains(err.Error(), "timeout_seconds") {
 		t.Fatalf("invalid timeout_seconds error = %v", err)
 	}
@@ -202,13 +203,13 @@ func clearConfigEnv(t *testing.T) {
 		"PERMISSION_CENTER_OIDC_SESSION_SECRET",
 		"PERMISSION_CENTER_OIDC_COOKIE_SECURE",
 		"PERMISSION_CENTER_OIDC_COOKIE_NAME",
-		"PERMISSION_CENTER_SERVICE_RESOURCE_CATALOG_SOURCE",
-		"PERMISSION_CENTER_SERVICE_RESOURCE_CATALOG_NEXUSAUTH_BASE_URL",
-		"PERMISSION_CENTER_SERVICE_RESOURCE_CATALOG_NEXUSAUTH_OPENAPI_BASE_URL",
-		"PERMISSION_CENTER_SERVICE_RESOURCE_CATALOG_API_KEY",
-		"PERMISSION_CENTER_SERVICE_RESOURCE_CATALOG_OPEN_CREDENTIAL",
-		"PERMISSION_CENTER_SERVICE_RESOURCE_CATALOG_TIMEOUT",
-		"PERMISSION_CENTER_SERVICE_RESOURCE_CATALOG_TIMEOUT_SECONDS",
+		"PERMISSION_CENTER_SERVICE_RESOURCE_SOURCE",
+		"PERMISSION_CENTER_SERVICE_RESOURCE_NEXUSAUTH_BASE_URL",
+		"PERMISSION_CENTER_SERVICE_RESOURCE_NEXUSAUTH_OPENAPI_BASE_URL",
+		"PERMISSION_CENTER_SERVICE_RESOURCE_API_KEY",
+		"PERMISSION_CENTER_SERVICE_RESOURCE_OPEN_CREDENTIAL",
+		"PERMISSION_CENTER_SERVICE_RESOURCE_TIMEOUT",
+		"PERMISSION_CENTER_SERVICE_RESOURCE_TIMEOUT_SECONDS",
 	} {
 		t.Setenv(key, "")
 	}

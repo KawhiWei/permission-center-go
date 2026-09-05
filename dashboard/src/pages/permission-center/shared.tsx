@@ -5,7 +5,6 @@ import {
   getStoredServiceResource,
   listServiceResources,
   type ServiceResource,
-  type ServiceResourceSource,
 } from '../../api/permission';
 
 export const getRequestErrorMessage = (error: unknown, fallback: string): string => {
@@ -27,18 +26,18 @@ export const getRequestErrorMessage = (error: unknown, fallback: string): string
   return fallback;
 };
 
-type ServiceResourceCatalog = {
+type ServiceResourcesState = {
   serviceResources: ServiceResource[];
-  serviceResourceCatalogSource: ServiceResourceSource;
+  serviceResourcesWritable: boolean;
   serviceResourcesLoading: boolean;
   serviceResourcesError: string | null;
   reloadServiceResources: () => Promise<void>;
 };
 
-export const useServiceResourceCatalog = (): ServiceResourceCatalog => {
+export const useServiceResources = (): ServiceResourcesState => {
   const [serviceResources, setServiceResources] = useState<ServiceResource[]>([]);
-  const [serviceResourceCatalogSource, setServiceResourceCatalogSource] = useState<ServiceResourceSource>('local');
-  // Keep the cached scope usable until the catalog has been checked.
+  const [serviceResourcesWritable, setServiceResourcesWritable] = useState(false);
+  // Keep the cached scope usable until the service resources have been checked.
   const [serviceResourcesLoading, setServiceResourcesLoading] = useState(true);
   const [serviceResourcesError, setServiceResourcesError] = useState<string | null>(null);
 
@@ -46,11 +45,12 @@ export const useServiceResourceCatalog = (): ServiceResourceCatalog => {
     setServiceResourcesLoading(true);
     setServiceResourcesError(null);
     try {
-      const catalog = await listServiceResources();
-      setServiceResources(catalog.items);
-      setServiceResourceCatalogSource(catalog.source);
+      const result = await listServiceResources();
+      setServiceResources(result.items);
+      setServiceResourcesWritable(result.writable);
     } catch (error) {
       setServiceResources([]);
+      setServiceResourcesWritable(false);
       setServiceResourcesError(getRequestErrorMessage(error, '加载服务资源列表失败'));
     } finally {
       setServiceResourcesLoading(false);
@@ -63,7 +63,7 @@ export const useServiceResourceCatalog = (): ServiceResourceCatalog => {
 
   return {
     serviceResources,
-    serviceResourceCatalogSource,
+    serviceResourcesWritable,
     serviceResourcesLoading,
     serviceResourcesError,
     reloadServiceResources,

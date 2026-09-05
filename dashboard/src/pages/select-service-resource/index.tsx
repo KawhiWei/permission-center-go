@@ -20,7 +20,7 @@ import {
 } from '../../router/auth';
 import {
   getRequestErrorMessage,
-  useServiceResourceCatalog,
+  useServiceResources,
 } from '../permission-center/shared';
 import '../permission-center/style.less';
 
@@ -36,7 +36,7 @@ const SelectServiceResourcePage = () => {
     serviceResourcesLoading,
     serviceResourcesError,
     reloadServiceResources,
-  } = useServiceResourceCatalog();
+  } = useServiceResources();
   const [selectedServiceResource, setSelectedServiceResource] = useState(getStoredServiceResource);
   const [submitting, setSubmitting] = useState(false);
   const [searchValue, setSearchValue] = useState('');

@@ -43,8 +43,8 @@ type ServiceResourceCatalog interface {
 	Get(context.Context, string) (*ServiceResource, error)
 }
 
-// ServiceResourceRepository 定义服务资源目录的持久化操作。
-// UpsertNexusAuth 由远程目录同步使用，必须保留同键本地记录的优先级。
+// ServiceResourceRepository 定义本地服务资源的持久化操作。
+// UpsertNexusAuth 保留供历史同步能力使用，当前远程读取路径不会调用它。
 type ServiceResourceRepository interface {
 	Create(context.Context, *ServiceResource) (*ServiceResource, error)
 	Get(context.Context, string) (*ServiceResource, error)
@@ -61,7 +61,7 @@ type ServiceResourceSourceRepository interface {
 	ListBySource(context.Context, string) ([]*ServiceResource, error)
 }
 
-// ServiceResourceService 提供持久化目录、远程目录同步和本地资源 CRUD。
+// ServiceResourceService 提供本地资源 CRUD，以及按配置来源读取服务资源。
 type ServiceResourceService struct {
 	repository ServiceResourceRepository
 	remote     ServiceResourceCatalog
@@ -70,26 +70,23 @@ type ServiceResourceService struct {
 
 var _ ServiceResourceCatalog = (*ServiceResourceService)(nil)
 
-// CatalogSource 返回环境配置决定的服务资源目录来源。
-func (s *ServiceResourceService) CatalogSource() string {
-	if s == nil {
-		return ""
-	}
-	return s.source
+// Writable 返回当前服务资源来源是否支持本地写操作。
+func (s *ServiceResourceService) Writable() bool {
+	return s != nil && s.source == ServiceResourceSourceLocal
 }
 
-// NewServiceResourceCatalog 创建按配置来源工作的持久化服务资源目录。
-// local 来源仅读取仓储；nexusauth 来源在成功同步远程目录后再从仓储读取。
+// NewServiceResourceCatalog 创建按配置来源工作的服务资源服务。
+// local 来源读取仓储并支持 CRUD；nexusauth 来源直接读取远程目录。
 func NewServiceResourceCatalog(repository ServiceResourceRepository, remote ServiceResourceCatalog, source string) (*ServiceResourceService, error) {
 	if repository == nil {
 		return nil, fmt.Errorf("service resource repository is required")
 	}
-	source, err := normalizeServiceResourceCatalogSource(source)
+	source, err := normalizeServiceResourceSource(source)
 	if err != nil {
 		return nil, err
 	}
 	if source == ServiceResourceSourceNexusAuth && remote == nil {
-		return nil, fmt.Errorf("nexusauth service resource catalog is required")
+		return nil, fmt.Errorf("nexusauth service resource client is required")
 	}
 	return &ServiceResourceService{repository: repository, remote: remote, source: source}, nil
 }
@@ -188,9 +185,7 @@ func (s *ServiceResourceService) List(ctx context.Context) ([]*ServiceResource, 
 		return nil, fmt.Errorf("service resource repository is not configured")
 	}
 	if s.source == ServiceResourceSourceNexusAuth {
-		if err := s.syncRemote(ctx); err != nil {
-			return nil, err
-		}
+		return s.listRemote(ctx)
 	}
 	return s.listBySource(ctx, s.source)
 }
@@ -205,11 +200,45 @@ func (s *ServiceResourceService) Get(ctx context.Context, resourceKey string) (*
 		return nil, err
 	}
 	if s.source == ServiceResourceSourceNexusAuth {
-		if err := s.syncRemote(ctx); err != nil {
-			return nil, err
-		}
+		return s.getRemote(ctx, resourceKey)
 	}
 	return s.getBySource(ctx, resourceKey, s.source)
+}
+
+func (s *ServiceResourceService) listRemote(ctx context.Context) ([]*ServiceResource, error) {
+	if s.remote == nil {
+		return nil, fmt.Errorf("nexusauth service resource client is not configured")
+	}
+	resources, err := s.remote.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	normalized := make([]*ServiceResource, 0, len(resources))
+	for _, resource := range resources {
+		if resource == nil {
+			continue
+		}
+		value, err := normalizeRemoteServiceResource(resource)
+		if err != nil {
+			return nil, err
+		}
+		normalized = append(normalized, value)
+	}
+	return normalized, nil
+}
+
+func (s *ServiceResourceService) getRemote(ctx context.Context, resourceKey string) (*ServiceResource, error) {
+	if s.remote == nil {
+		return nil, fmt.Errorf("nexusauth service resource client is not configured")
+	}
+	resource, err := s.remote.Get(ctx, resourceKey)
+	if err != nil {
+		return nil, err
+	}
+	if resource == nil {
+		return nil, ErrNotFound
+	}
+	return normalizeRemoteServiceResource(resource)
 }
 
 // listBySource 按来源读取服务资源；支持按来源查询的仓储直接在数据库中过滤。
@@ -252,29 +281,6 @@ func (s *ServiceResourceService) getBySource(ctx context.Context, resourceKey, s
 	return value, nil
 }
 
-func (s *ServiceResourceService) syncRemote(ctx context.Context) error {
-	if s.remote == nil {
-		return fmt.Errorf("nexusauth service resource catalog is not configured")
-	}
-	resources, err := s.remote.List(ctx)
-	if err != nil {
-		return err
-	}
-	for _, resource := range resources {
-		if resource == nil {
-			continue
-		}
-		synced, err := normalizeRemoteServiceResource(resource)
-		if err != nil {
-			return err
-		}
-		if _, err := s.repository.UpsertNexusAuth(ctx, synced); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func normalizeRemoteServiceResource(resource *ServiceResource) (*ServiceResource, error) {
 	if resource == nil {
 		return nil, fmt.Errorf("%w: service resource is required", ErrInvalidArgument)
@@ -297,13 +303,13 @@ func normalizeRemoteServiceResource(resource *ServiceResource) (*ServiceResource
 	return &value, nil
 }
 
-func normalizeServiceResourceCatalogSource(source string) (string, error) {
+func normalizeServiceResourceSource(source string) (string, error) {
 	source = strings.ToLower(strings.TrimSpace(source))
 	if source == "" {
 		source = ServiceResourceSourceLocal
 	}
 	if source != ServiceResourceSourceLocal && source != ServiceResourceSourceNexusAuth {
-		return "", fmt.Errorf("%w: service_resource_catalog.source must be local or nexusauth", ErrInvalidArgument)
+		return "", fmt.Errorf("%w: service_resource.source must be local or nexusauth", ErrInvalidArgument)
 	}
 	return source, nil
 }
@@ -345,7 +351,7 @@ func NewNexusAuthServiceResourceCatalogWithClient(baseURL, credential string, ti
 // List 从 NexusAuth 服务资源目录读取全部服务资源。
 func (c *NexusAuthServiceResourceCatalog) List(ctx context.Context) ([]*ServiceResource, error) {
 	if c == nil || c.client == nil {
-		return nil, fmt.Errorf("service resource catalog is not configured")
+		return nil, fmt.Errorf("service resource client is not configured")
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/openapi/v1/service-resources", nil)
 	if err != nil {

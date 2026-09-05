@@ -1,4 +1,9 @@
-import { expect, test, type Page, type Route } from '@playwright/test';
+import { createRequire } from 'node:module';
+import type { Page, Route } from '../../../dashboard/node_modules/@playwright/test';
+
+// Resolve Playwright from the Dashboard package while the test suite lives at the repository root.
+const requireDashboardDependency = createRequire(new URL('../../../dashboard/package.json', import.meta.url));
+const { expect, test } = requireDashboardDependency('@playwright/test') as typeof import('../../../dashboard/node_modules/@playwright/test');
 
 const SERVICE_RESOURCE_STORAGE_KEY = 'permission-center-service-resource';
 const LAYOUT_TABS_STORAGE_KEY = 'permission-center-layout-tabs';
@@ -84,7 +89,7 @@ type RoleRequest = {
 
 type PermissionMockState = {
   authenticated: boolean;
-  catalogSource: 'local' | 'nexusauth';
+  serviceResourcesWritable: boolean;
   serviceResources: ServiceResourceRecord[];
   rolesByServiceResource: Record<string, RoleRecord[]>;
   menusByServiceResource: Record<string, MenuRecord[]>;
@@ -228,7 +233,7 @@ const getServiceResourceRecords = (): ServiceResourceRecord[] => [
 const installAPIMocks = async (page: Page): Promise<PermissionMockState> => {
   const state: PermissionMockState = {
     authenticated: true,
-    catalogSource: 'local',
+    serviceResourcesWritable: true,
     serviceResources: getServiceResourceRecords(),
     rolesByServiceResource: {
       [FIRST_SERVICE_RESOURCE.key]: [
@@ -307,7 +312,7 @@ const installAPIMocks = async (page: Page): Promise<PermissionMockState> => {
     const url = new URL(request.url());
     if (request.method() === 'GET' && url.pathname === '/api/v1/service-resources') {
       state.serviceResourceRequests += 1;
-      await fulfillJSON(route, jsonResult({ items: state.serviceResources, source: state.catalogSource }));
+      await fulfillJSON(route, jsonResult({ items: state.serviceResources, writable: state.serviceResourcesWritable }));
       return;
     }
 
@@ -1088,7 +1093,7 @@ test.describe('权限中心关键操作流程', () => {
 
   test('NexusAuth 服务资源条目仅供查看', async ({ page }) => {
     const state = await installAPIMocks(page);
-    state.catalogSource = 'nexusauth';
+    state.serviceResourcesWritable = false;
     state.serviceResources = [{ ...SECOND_SERVICE_RESOURCE }];
     await seedServiceResource(page);
     await page.goto('/service-resources');

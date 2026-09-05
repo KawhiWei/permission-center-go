@@ -13,7 +13,7 @@ import {
   formatDateTime,
   getRequestErrorMessage,
   PageHeader,
-  useServiceResourceCatalog,
+  useServiceResources,
 } from '../shared';
 import '../style.less';
 
@@ -45,11 +45,11 @@ const sourceTheme = (source: ServiceResource['source']): 'primary' | 'default' =
 const ServiceResourceManagementPage = () => {
   const {
     serviceResources,
-    serviceResourceCatalogSource,
+    serviceResourcesWritable,
     serviceResourcesLoading,
     serviceResourcesError,
     reloadServiceResources,
-  } = useServiceResourceCatalog();
+  } = useServiceResources();
   const [dialogVisible, setDialogVisible] = useState(false);
   const [form, setForm] = useState<ServiceResourceForm>({ ...EMPTY_FORM });
   const [editingResource, setEditingResource] = useState<ServiceResource | null>(null);
@@ -146,13 +146,13 @@ const ServiceResourceManagementPage = () => {
     <div className="permission-page permission-service-resource-page">
       <PageHeader
         title="服务资源管理"
-        description={serviceResourceCatalogSource === 'local' ? '当前使用本地服务资源目录' : '当前从 NexusAuth 获取服务资源目录，资源为只读'}
-        actions={serviceResourceCatalogSource === 'local' ? <Button theme="primary" type="button" onClick={openCreateDialog}>新建服务资源</Button> : undefined}
+        description={serviceResourcesWritable ? '当前服务资源可由权限中心维护' : '当前服务资源由外部系统提供，资源为只读'}
+        actions={serviceResourcesWritable ? <Button theme="primary" type="button" onClick={openCreateDialog}>新建服务资源</Button> : undefined}
       />
 
       <div className="permission-toolbar">
         <span className="permission-toolbar-meta">共 {serviceResources.length} 个服务资源</span>
-        <span className="permission-toolbar-meta">目录来源：{sourceLabel(serviceResourceCatalogSource)}</span>
+        <span className="permission-toolbar-meta">维护模式：{serviceResourcesWritable ? '可编辑' : '只读'}</span>
       </div>
 
       <Card className="permission-card" bordered>
@@ -196,7 +196,7 @@ const ServiceResourceManagementPage = () => {
                   <td><Tag theme={resource.isActive ? 'success' : 'default'} variant="light-outline">{resource.isActive ? '启用' : '停用'}</Tag></td>
                   <td className="permission-table-muted">{formatDateTime(resource.createdAt)}</td>
                   <td>
-                    {serviceResourceCatalogSource === 'local' && resource.source === 'local' ? (
+                    {serviceResourcesWritable ? (
                       <Space size="small">
                         <Button variant="text" theme="primary" type="button" onClick={() => openEditDialog(resource)}>编辑</Button>
                         <Button variant="text" theme="danger" type="button" onClick={() => setDeleteTarget(resource)}>删除</Button>

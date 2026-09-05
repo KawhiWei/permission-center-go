@@ -19,9 +19,9 @@ export type ServiceResource = {
   createdAt?: string;
 };
 
-export type ServiceResourceCatalog = {
+export type ServiceResourceList = {
   items: ServiceResource[];
-  source: ServiceResourceSource;
+  writable: boolean;
 };
 
 export type CreateServiceResourceRequest = {
@@ -353,11 +353,10 @@ const dispatchMenuChange = (serviceResource?: string) => {
   }
 };
 
-export const listServiceResources = async (): Promise<ServiceResourceCatalog> => {
+export const listServiceResources = async (): Promise<ServiceResourceList> => {
   const response = await request.get<unknown>('/v1/service-resources');
   const record = (response && typeof response === 'object' ? response : {}) as RawRecord;
-  const source = rawString(record, 'source', 'Source') === 'nexusauth' ? 'nexusauth' : 'local';
-  return { items: readItems(response).map(normalizeServiceResource), source };
+  return { items: readItems(response).map(normalizeServiceResource), writable: rawBoolean(record, 'writable', 'Writable') };
 };
 
 export const getServiceResource = async (key: string): Promise<ServiceResource> => {

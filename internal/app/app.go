@@ -29,7 +29,7 @@ func New(ctx context.Context, cfg *config.Config) (*Application, error) {
 	menus := repo.NewMenuRepository(pool)
 	userRoles := repo.NewUserRoleRepository(pool)
 	serviceResourceRepository := repo.NewServiceResourceRepository(pool)
-	serviceResources, err := newServiceResourceCatalog(serviceResourceRepository, cfg.ServiceResourceCatalog)
+	serviceResources, err := newServiceResourceCatalog(serviceResourceRepository, cfg.ServiceResource)
 	if err != nil {
 		pool.Close()
 		return nil, err
@@ -50,8 +50,8 @@ func New(ctx context.Context, cfg *config.Config) (*Application, error) {
 	}, nil
 }
 
-// newServiceResourceCatalog 创建持久化服务资源目录；仅 NexusAuth 模式连接远程目录。
-func newServiceResourceCatalog(repository biz.ServiceResourceRepository, cfg config.ServiceResourceCatalogConfig) (*biz.ServiceResourceService, error) {
+// newServiceResourceCatalog 根据后端配置创建本地或 NexusAuth 服务资源来源。
+func newServiceResourceCatalog(repository biz.ServiceResourceRepository, cfg config.ServiceResourceConfig) (*biz.ServiceResourceService, error) {
 	var remote biz.ServiceResourceCatalog
 	if cfg.Source == biz.ServiceResourceSourceNexusAuth {
 		timeout, err := cfg.TimeoutDuration()

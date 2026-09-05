@@ -125,11 +125,11 @@ func (h *Handler) ListServiceResources(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	source := ""
-	if provider, ok := h.serviceResources.(interface{ CatalogSource() string }); ok {
-		source = provider.CatalogSource()
+	writable := false
+	if h.serviceResourceService != nil {
+		writable = h.serviceResourceService.Writable()
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": values, "source": source})
+	writeJSON(w, http.StatusOK, map[string]any{"items": values, "writable": writable})
 }
 
 // GetServiceResource 按唯一 key 返回一个服务资源。
