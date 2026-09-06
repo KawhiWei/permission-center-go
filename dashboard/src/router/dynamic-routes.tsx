@@ -49,7 +49,7 @@ const routePath = (value: string, parentPath: string): string => {
   }
 
   const parent = parentPath === '/' ? '' : parentPath.replace(/\/+$/, '');
-  return `${parent}/${path.replace(/^\/+/, '')}` || '/';
+  return `${parent}/${path.replace(/^\/+/, '')}`;
 };
 
 export const buildNavigationMenus = (nodes: Menu[], parentPath = ''): NavigationMenu[] => nodes

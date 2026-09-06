@@ -5,9 +5,9 @@
 ## 模型
 
 - `service_resources`：权限中心在 `local` 模式下持久化的服务资源，`resource_key` 是统一隔离键。`nexusauth` 模式由 Go 后端直接读取 NexusAuth 开放 API，不将远程服务资源写入本地表。
-- `authorization_api_endpoints`：服务资源下的 API 接口目录，通过 `service_resource` 外键关联 `service_resources.resource_key`，按“服务资源 + Method + Path 模板”去重。
+- `authorization_api_endpoints`：服务资源下的 API 接口目录，通过 `service_resource` 业务键隔离，按“服务资源 + Method + Path 模板”去重。
 - `role`：角色 ID 使用 `VARCHAR(80)` 字符串，角色编码在同一服务资源内唯一。
-- `menu`：同一服务资源内的菜单与按钮树。`type=menu` 用于导航节点；`type=button` 用于页面操作，必须挂在菜单下，并提供受保护的 `api_path`（可选 `http_method`）。菜单项编码在同一服务资源内唯一。
+- `menu`：同一服务资源内的菜单与按钮树。`type=menu` 用于导航节点；`type=button` 用于页面操作并必须挂在菜单下，可通过 `api_path` 和枚举化的 `http_method` 描述该按钮通常触发的单个 API。该映射仅是 UI 元数据和管理辅助引用，不作为后端放行依据，也不关联 PDP 授权策略。菜单项编码在同一服务资源内唯一。
 - `role_menus`：角色和菜单项的多对多授权关系。一次 `PUT` 会在单一事务中全量替换该角色的授权集。
 - `user_roles`：NexusAuth 用户 `sub` 与角色的多对多关系。`subject` 和 `role_id` 均为 `VARCHAR(80)`；不在本服务复制用户表。分配角色时按服务资源全量替换，其他服务资源的角色保持不变。
 角色、菜单及其关联表统一使用公共审计字段：`created_by_id`、`created_by_name`、`created_at`、`updated_by_id`、`updated_by_name`、`updated_at`、`is_deleted`。创建人与修改人由后端从 NexusAuth 会话读取，接口不接受客户端传入审计身份；OIDC 关闭时记录为 `development / 开发模式`。删除及关联关系替换均使用 `is_deleted` 软删除，查询只返回未删除数据。
@@ -36,7 +36,9 @@ Dashboard 左侧导航和受保护页面路由均由当前服务资源的 `/v1/m
 | GET/PUT/DELETE | `/v1/authorization/api-endpoints/{id}` | 获取、更新或软删除 API 端点 |
 | POST | `/v1/authorization/api-endpoints/import-swagger` | 从 Swagger/OpenAPI 地址导入 API 端点 |
 
-Swagger 导入支持 Swagger 2.0 和 OpenAPI 3.x 的 JSON、YAML 及常见 Swagger UI 页面，兼容 Java、.NET 和 Go 常见的 controller/tag/operationId 表达。导入时必须提供 `service_resource`，每条端点保存 Controller、Method、Path 和 Summary；重复的 Method + Path 会被跳过。当前阶段不包含 API 端点与角色绑定、授权决策和通用 PDP 策略。
+Swagger 导入支持 Swagger 2.0 和 OpenAPI 3.x 的 JSON、YAML 及常见 Swagger UI 页面，兼容 Java、.NET 和 Go 常见的 controller/tag/operationId 表达。导入时必须提供 `service_resource`，每条端点保存 Controller、Method、Path 和 Summary；重复的 Method + Path 会被跳过。自研 PDP 的策略、角色与 API 绑定及后续行级、属性级扩展见 [自研 PDP 授权引擎设计](docs/custom-pdp-design.md)。
+
+PDP 控制面使用 `/v1/authorization/policies` 管理草稿、发布和回滚；运行时使用 `POST /v1/pdp/decisions`，请求必须提供 `subject`、`action` 和 `resource`，首期资源类型固定为 `api_endpoint`。业务服务通过 `sdk/pdp` 的 fail-closed middleware 接入：身份和租户必须从已验证 token/session 解析，API 端点必须从服务端路由模板解析，不能由浏览器或请求体提供角色与租户事实。
 
 启用 OIDC 后，上述 `/v1/*` 接口全部要求登录。`/healthz` 与以下认证接口公开：
 
@@ -50,7 +52,7 @@ Swagger 导入支持 Swagger 2.0 和 OpenAPI 3.x 的 JSON、YAML 及常见 Swagg
 
 ## NexusAuth 接入
 
-服务资源默认使用 `local` 模式，Go 后端直接读取本地数据库。配置为 `nexusauth` 时，Go 后端在请求期间通过 NexusAuth 的 `GET /openapi/v1/service-resources` 获取服务资源，不在本地数据库中同步或缓存远程记录。先在 NexusAuth Workbench 创建 `targetType=service_resource` 的开放 API 凭据，再仅在权限中心后端配置来源和明文 token：
+服务资源默认使用 `nexusauth` 模式。Go 后端在请求期间通过 NexusAuth 的 `GET /openapi/v1/service-resources` 获取服务资源，不在本地数据库中同步或缓存远程记录；缺少开放 API 凭据时启动失败，不会回退到本地数据。先在 NexusAuth Workbench 创建 `targetType=service_resource` 的开放 API 凭据，再仅在权限中心后端配置来源和明文 token：
 
 ```dotenv
 PERMISSION_CENTER_SERVICE_RESOURCE_SOURCE=nexusauth
@@ -58,7 +60,7 @@ PERMISSION_CENTER_SERVICE_RESOURCE_NEXUSAUTH_BASE_URL=http://host.docker.interna
 PERMISSION_CENTER_SERVICE_RESOURCE_API_KEY=<service_resource-open-api-token>
 ```
 
-该 token 不是 OIDC Client Secret，不能写入前端、接口响应或提交到 Git。环境变量由 Go 后端读取并决定唯一数据来源：`local` 模式只返回本地记录并允许 CRUD，`nexusauth` 模式直接返回 NexusAuth 开放 API 数据并禁止本地写入。前端只消费后端返回的服务资源和 `writable` 能力，不读取环境变量，也不选择数据来源。服务资源接口显式返回唯一 `key`，Swagger 导入请求中的 `service_resource` 必须填写该 key。登录后的用户必须先选择服务资源，角色、菜单、API 端点和用户角色绑定页面才能进入。
+该 token 不是 OIDC Client Secret，不能写入前端、接口响应或提交到 Git。环境变量由 Go 后端读取并决定唯一数据来源：默认 `nexusauth` 模式直接返回 NexusAuth 开放 API 数据并禁止本地写入；只有显式设置 `PERMISSION_CENTER_SERVICE_RESOURCE_SOURCE=local` 时才读取本地记录并允许 CRUD。前端只消费后端返回的服务资源和 `writable` 能力，不读取环境变量，也不选择数据来源。服务资源接口显式返回唯一 `key`，Swagger 导入请求中的 `service_resource` 必须填写该 key。登录后的用户必须先选择服务资源，才能进入角色、菜单与按钮、API 端点和 PDP 策略页面；用户分配在角色管理抽屉中完成。
 
 在 NexusAuth 中自行创建客户端和服务资源并完成绑定。开发环境建议登记：
 
@@ -88,7 +90,7 @@ curl -X POST http://localhost:8080/v1/menus \
 
 curl -X POST http://localhost:8080/v1/menus \
   -H 'Content-Type: application/json' \
-  -d '{"service_resource":"admin-console","parent_id":"'$MENU_ID'","code":"system:user:create","name":"新增用户","type":"button","api_path":"/api/users","http_method":"POST"}'
+  -d '{"service_resource":"admin-console","parent_id":"'$MENU_ID'","code":"system:user:create","name":"新增用户","type":"button"}'
 ```
 
 ## Run

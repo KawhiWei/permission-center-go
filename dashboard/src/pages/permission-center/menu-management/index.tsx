@@ -8,6 +8,7 @@ import {
   updateMenu,
   type CreateMenuRequest,
   type Menu,
+  type MenuHTTPMethod,
   type MenuType,
   type UpdateMenuRequest,
 } from '../../../api/permission';
@@ -23,7 +24,7 @@ type MenuForm = {
   path: string;
   component: string;
   apiPath: string;
-  httpMethod: string;
+  httpMethod: MenuHTTPMethod;
   icon: string;
   sort: string;
   enabled: boolean;
@@ -49,7 +50,8 @@ const menuTypeOptions = [
   { label: '按钮', value: 'button' },
 ];
 
-const httpMethodOptions = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].map((method) => ({ label: method, value: method }));
+const httpMethods: MenuHTTPMethod[] = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'];
+const httpMethodOptions = httpMethods.map((method) => ({ label: method, value: method }));
 
 const statusOptions = [
   { label: '启用', value: 'enabled' },
@@ -163,12 +165,12 @@ const MenuManagementPage = () => {
     }));
   };
 
-  const openCreateDrawer = (type: MenuType) => {
+  const openCreateDrawer = () => {
     setMenuEditor((current) => ({
       ...current,
       visible: true,
       editingMenu: null,
-      form: { ...EMPTY_MENU_FORM, type },
+      form: { ...EMPTY_MENU_FORM },
     }));
   };
 
@@ -224,7 +226,6 @@ const MenuManagementPage = () => {
       MessagePlugin.warning('按钮必须填写 API 路径');
       return;
     }
-
     const parsedSort = Number(menuForm.sort);
     const sort = Number.isFinite(parsedSort) ? parsedSort : 0;
     const editing = editingMenu;
@@ -238,8 +239,8 @@ const MenuManagementPage = () => {
           description: menuForm.description.trim(),
           path: menuForm.path.trim(),
           component: menuForm.component.trim(),
-          api_path: apiPath,
-          http_method: menuForm.httpMethod,
+          api_path: editing.type === 'button' ? apiPath : '',
+          http_method: editing.type === 'button' ? menuForm.httpMethod : '',
           icon: menuForm.icon.trim(),
           sort,
           enabled: menuForm.enabled,
@@ -295,18 +296,8 @@ const MenuManagementPage = () => {
     <div className="permission-page permission-menu-page">
       <PageHeader
         title="菜单与按钮管理"
-        description="维护服务资源导航树和操作按钮，菜单与按钮使用类型严格区分"
-        actions={(
-          <Space>
-            <Button variant="outline" theme="primary" type="button" onClick={() => openCreateDrawer('menu')}>新建菜单</Button>
-            <Button theme="primary" type="button" onClick={() => openCreateDrawer('button')}>新建按钮</Button>
-          </Space>
-        )}
+        actions={<Button theme="primary" type="button" onClick={openCreateDrawer}>新建权限节点</Button>}
       />
-
-      <div className="permission-toolbar">
-        <span className="permission-toolbar-meta">{flattenMenus(tree).length} 个权限节点</span>
-      </div>
 
       <Card className="permission-card" bordered>
         <div className="permission-tree">
@@ -327,6 +318,7 @@ const MenuManagementPage = () => {
 
       {drawerVisible ? (
         <Drawer
+          key={editingMenu?.id || 'create'}
           visible
           header={editingMenu ? `编辑${menuForm.type === 'menu' ? '菜单' : '按钮'}` : `新建${menuForm.type === 'menu' ? '菜单' : '按钮'}`}
           size="560px"
@@ -336,7 +328,7 @@ const MenuManagementPage = () => {
           onCancel={closeMenuEditor}
           onClose={closeMenuEditor}
         >
-          <Form className="permission-drawer-form" labelAlign="top" initialData={menuForm}>
+          <Form className="permission-drawer-form" labelAlign="top" initialData={{ ...menuForm, enabled: menuForm.enabled ? 'enabled' : 'disabled' }}>
           <Form.FormItem label="类型" name="type">
             <Select
               value={menuForm.type}
@@ -382,11 +374,11 @@ const MenuManagementPage = () => {
             </>
           ) : (
             <>
-              <Form.FormItem label="API 路径" name="apiPath" className="full-width" help="按钮权限在后端鉴权时可映射到该接口路径。">
+              <Form.FormItem label="API 路径" name="apiPath" className="full-width">
                 <Input value={menuForm.apiPath} placeholder="例如 /v1/articles" onChange={(value) => updateMenuForm((prev) => ({ ...prev, apiPath: value }))} />
               </Form.FormItem>
               <Form.FormItem label="HTTP 方法" name="httpMethod">
-                <Select value={menuForm.httpMethod} options={httpMethodOptions} onChange={(value) => updateMenuForm((prev) => ({ ...prev, httpMethod: String(value) }))} />
+                <Select value={menuForm.httpMethod} options={httpMethodOptions} onChange={(value) => updateMenuForm((prev) => ({ ...prev, httpMethod: value as MenuHTTPMethod }))} />
               </Form.FormItem>
             </>
           )}
@@ -394,7 +386,6 @@ const MenuManagementPage = () => {
             <Form.FormItem
               label="启用状态"
               name="enabled"
-              initialData={menuForm.enabled ? 'enabled' : 'disabled'}
             >
               <Select
                 value={menuForm.enabled ? 'enabled' : 'disabled'}

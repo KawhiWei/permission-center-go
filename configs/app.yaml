@@ -5,12 +5,15 @@ database:
   max_conns: 10
   min_conns: 2
 service_resource:
-  source: "local"
+  source: "nexusauth"
   nexusauth_base_url: "http://localhost:5100"
   # Configure a targetType=service_resource Open API credential through
   # PERMISSION_CENTER_SERVICE_RESOURCE_API_KEY in production.
   api_key: ""
   timeout: "5s"
+pdp:
+  # Required by the service-to-service /v1/pdp/decisions endpoint in production.
+  service_credential: ""
 oidc:
   enabled: false
   authority: "http://localhost:5100"

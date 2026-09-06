@@ -4,12 +4,10 @@ import { Button, Card, Checkbox, Dialog, Drawer, Form, Input, MessagePlugin, Sel
 import {
   createRole,
   deleteRole,
-  getMenuTree,
-  getRoleMenuIDs,
+  getUserRoleIDs,
   listRoles,
-  replaceRoleMenus,
+  replaceUserRoles,
   updateRole,
-  type Menu,
   type Role,
 } from '../../../api/permission';
 import { formatDateTime, getRequestErrorMessage, PageHeader, useServiceResourceScope } from '../shared';
@@ -22,22 +20,12 @@ type RoleForm = {
   enabled: boolean;
 };
 
-type FlatMenu = {
-  menu: Menu;
-  depth: number;
-};
-
 const EMPTY_ROLE_FORM: RoleForm = { code: '', name: '', description: '', enabled: true };
 
 const statusOptions = [
   { label: '启用', value: 'enabled' },
   { label: '停用', value: 'disabled' },
 ];
-
-const flattenMenus = (nodes: Menu[], depth = 0): FlatMenu[] => nodes.flatMap((menu) => [
-  { menu, depth },
-  ...flattenMenus(menu.children, depth + 1),
-]);
 
 const RoleManagementPage = () => {
   const { serviceResource } = useServiceResourceScope();
@@ -49,12 +37,14 @@ const RoleManagementPage = () => {
   const [savingRole, setSavingRole] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Role | null>(null);
   const [deleting, setDeleting] = useState(false);
-  const [grantVisible, setGrantVisible] = useState(false);
-  const [grantRole, setGrantRole] = useState<Role | null>(null);
-  const [grantMenus, setGrantMenus] = useState<FlatMenu[]>([]);
-  const [grantMenuIDs, setGrantMenuIDs] = useState<string[]>([]);
-  const [grantLoading, setGrantLoading] = useState(false);
-  const [savingGrant, setSavingGrant] = useState(false);
+  const [assignmentVisible, setAssignmentVisible] = useState(false);
+  const [assignmentRole, setAssignmentRole] = useState<Role | null>(null);
+  const [assignmentSubject, setAssignmentSubject] = useState('');
+  const [queriedAssignmentSubject, setQueriedAssignmentSubject] = useState('');
+  const [assignmentRoleIDs, setAssignmentRoleIDs] = useState<string[]>([]);
+  const [assignmentRoleSelected, setAssignmentRoleSelected] = useState(false);
+  const [assignmentLoading, setAssignmentLoading] = useState(false);
+  const [savingAssignment, setSavingAssignment] = useState(false);
 
   const loadRoles = useCallback(async (scope: string) => {
     setLoading(true);
@@ -152,49 +142,95 @@ const RoleManagementPage = () => {
     }
   };
 
-  const openGrantDrawer = async (role: Role) => {
-    setGrantRole(role);
-    setGrantVisible(true);
-    setGrantLoading(true);
+  const resetAssignmentDrawer = () => {
+    setAssignmentVisible(false);
+    setAssignmentRole(null);
+    setAssignmentSubject('');
+    setQueriedAssignmentSubject('');
+    setAssignmentRoleIDs([]);
+    setAssignmentRoleSelected(false);
+  };
+
+  const openAssignmentDrawer = (role: Role) => {
+    if (assignmentLoading || savingAssignment) {
+      return;
+    }
+    setAssignmentRole(role);
+    setAssignmentSubject('');
+    setQueriedAssignmentSubject('');
+    setAssignmentRoleIDs([]);
+    setAssignmentRoleSelected(false);
+    setAssignmentVisible(true);
+  };
+
+  const closeAssignmentDrawer = () => {
+    if (assignmentLoading || savingAssignment) {
+      return;
+    }
+    resetAssignmentDrawer();
+  };
+
+  const changeAssignmentSubject = (value: string) => {
+    setAssignmentSubject(value);
+    setQueriedAssignmentSubject('');
+    setAssignmentRoleIDs([]);
+    setAssignmentRoleSelected(false);
+  };
+
+  const queryAssignment = async () => {
+    if (assignmentLoading || savingAssignment || !assignmentRole) {
+      return;
+    }
+    const subject = assignmentSubject.trim();
+    if (!subject) {
+      MessagePlugin.warning('请输入 NexusAuth subject');
+      return;
+    }
+
+    setAssignmentLoading(true);
     try {
-      const [tree, selected] = await Promise.all([getMenuTree(role.serviceResource), getRoleMenuIDs(role.id)]);
-      setGrantMenus(flattenMenus(tree));
-      setGrantMenuIDs(selected);
+      const roleIDs = Array.from(new Set(await getUserRoleIDs(subject, assignmentRole.serviceResource)));
+      setAssignmentRoleIDs(roleIDs);
+      setQueriedAssignmentSubject(subject);
+      setAssignmentRoleSelected(roleIDs.includes(assignmentRole.id));
     } catch (error) {
-      setGrantMenus([]);
-      setGrantMenuIDs([]);
-      MessagePlugin.error(getRequestErrorMessage(error, '加载角色授权信息失败'));
+      setQueriedAssignmentSubject('');
+      setAssignmentRoleIDs([]);
+      setAssignmentRoleSelected(false);
+      MessagePlugin.error(getRequestErrorMessage(error, '查询用户角色失败'));
     } finally {
-      setGrantLoading(false);
+      setAssignmentLoading(false);
     }
   };
 
-  const closeGrantDrawer = () => {
-    if (savingGrant) {
+  const saveAssignment = async () => {
+    if (assignmentLoading || savingAssignment) {
       return;
     }
-    setGrantVisible(false);
-    setGrantRole(null);
-    setGrantMenus([]);
-    setGrantMenuIDs([]);
-  };
+    const role = assignmentRole;
+    const subject = assignmentSubject.trim();
+    if (!role || !subject || queriedAssignmentSubject !== subject) {
+      MessagePlugin.warning('请先查询用户角色');
+      return;
+    }
 
-  const saveGrant = async () => {
-    if (!grantRole) {
-      return;
+    const nextRoleIDs = new Set(assignmentRoleIDs);
+    if (assignmentRoleSelected) {
+      nextRoleIDs.add(role.id);
+    } else {
+      nextRoleIDs.delete(role.id);
     }
-    setSavingGrant(true);
+
+    setSavingAssignment(true);
     try {
-      await replaceRoleMenus(grantRole.id, grantMenuIDs);
-      MessagePlugin.success('角色菜单权限已保存');
-      setGrantVisible(false);
-      setGrantRole(null);
-      setGrantMenus([]);
-      setGrantMenuIDs([]);
+      await replaceUserRoles(subject, role.serviceResource, Array.from(nextRoleIDs));
+      await getUserRoleIDs(subject, role.serviceResource);
+      resetAssignmentDrawer();
+      MessagePlugin.success('用户分配已保存');
     } catch (error) {
-      MessagePlugin.error(getRequestErrorMessage(error, '保存角色授权失败'));
+      MessagePlugin.error(getRequestErrorMessage(error, '保存用户分配失败'));
     } finally {
-      setSavingGrant(false);
+      setSavingAssignment(false);
     }
   };
 
@@ -202,13 +238,8 @@ const RoleManagementPage = () => {
     <div className="permission-page permission-role-page">
       <PageHeader
         title="角色管理"
-        description="在服务资源范围内建立角色，并为角色分配菜单与按钮权限"
         actions={<Button theme="primary" type="button" onClick={openCreateDialog}>新建角色</Button>}
       />
-
-      <div className="permission-toolbar">
-        <span className="permission-toolbar-meta">共 {roles.length} 个角色</span>
-      </div>
 
       <Card className="permission-card" bordered>
         <div className="permission-table-wrap">
@@ -242,7 +273,7 @@ const RoleManagementPage = () => {
                     <Space size="small">
                       <Button variant="text" theme="primary" type="button" onClick={() => openEditDialog(role)}>编辑</Button>
                       <Button variant="text" theme="danger" type="button" onClick={() => setDeleteTarget(role)}>删除</Button>
-                      <Button variant="text" theme="primary" type="button" disabled={!role.enabled} onClick={() => void openGrantDrawer(role)}>菜单授权</Button>
+                      <Button variant="text" theme="primary" type="button" disabled={!role.enabled} onClick={() => openAssignmentDrawer(role)}>分配用户</Button>
                     </Space>
                   </td>
                 </tr>
@@ -314,47 +345,54 @@ const RoleManagementPage = () => {
         destroyOnClose
       >
         <p className="permission-delete-warning">
-          确认删除角色 <strong>{deleteTarget?.name || deleteTarget?.code || ''}</strong>？删除后该角色的菜单授权和用户绑定也会失效。
+          确认删除角色 <strong>{deleteTarget?.name || deleteTarget?.code || ''}</strong>？删除后该角色的用户绑定也会失效。
         </p>
       </Dialog>
 
       <Drawer
-        visible={grantVisible}
-        header={grantRole ? `菜单授权 · ${grantRole.name}` : '菜单授权'}
+        visible={assignmentVisible}
+        header={assignmentRole ? `分配用户 · ${assignmentRole.name}` : '分配用户'}
         size="520px"
-        confirmBtn={{ content: '保存授权', theme: 'primary', loading: savingGrant || grantLoading }}
+        confirmBtn={{
+          content: '保存分配',
+          theme: 'primary',
+          loading: savingAssignment,
+          disabled: !queriedAssignmentSubject || queriedAssignmentSubject !== assignmentSubject.trim() || assignmentLoading,
+        }}
         cancelBtn="取消"
-        onConfirm={() => void saveGrant()}
-        onCancel={closeGrantDrawer}
-        onClose={closeGrantDrawer}
+        onConfirm={() => void saveAssignment()}
+        onCancel={closeAssignmentDrawer}
+        onClose={closeAssignmentDrawer}
         destroyOnClose
       >
         <Space direction="vertical" size={10} style={{ width: '100%' }}>
-          <div className="permission-form-help">勾选角色可见的菜单和按钮，保存后会整体替换该角色在当前服务资源内的授权。</div>
-          {grantLoading ? (
-            <div className="permission-empty">正在加载菜单权限...</div>
-          ) : grantMenus.length === 0 ? (
-            <div className="permission-empty">当前服务资源暂无可授权的菜单或按钮</div>
-          ) : (
-            <Checkbox.Group
-              value={grantMenuIDs}
-              onChange={(value) => setGrantMenuIDs(value.map(String))}
+          <Space>
+            <Input
+              value={assignmentSubject}
+              placeholder="输入 NexusAuth subject"
+              clearable
+              disabled={assignmentLoading || savingAssignment}
+              onChange={changeAssignmentSubject}
+              onEnter={() => void queryAssignment()}
+            />
+            <Button
+              theme="primary"
+              type="button"
+              loading={assignmentLoading}
+              disabled={savingAssignment}
+              onClick={() => void queryAssignment()}
+            >查询</Button>
+          </Space>
+          {queriedAssignmentSubject ? (
+            <Checkbox
+              checked={assignmentRoleSelected}
+              disabled={savingAssignment}
+              onChange={(checked) => setAssignmentRoleSelected(checked)}
             >
-              <div className="permission-grant-list">
-                {grantMenus.map(({ menu, depth }) => (
-                  <div key={menu.id} className="permission-grant-item" style={{ paddingLeft: 8 + depth * 22 }}>
-                    <Checkbox value={menu.id} disabled={!menu.enabled} />
-                    <div className="permission-grant-label">
-                      <Tag theme={menu.type === 'menu' ? 'primary' : 'warning'} variant="light-outline">
-                        {menu.type === 'menu' ? '菜单' : '按钮'}
-                      </Tag>
-                      <strong title={menu.name}>{menu.name}</strong>
-                      <span className="permission-grant-code" title={menu.code}>{menu.code}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </Checkbox.Group>
+              分配当前角色
+            </Checkbox>
+          ) : (
+            <div className="permission-empty">输入 NexusAuth subject 后查询当前用户的角色分配。</div>
           )}
         </Space>
       </Drawer>

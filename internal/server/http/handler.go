@@ -18,7 +18,14 @@ type Handler struct {
 	serviceResources       biz.ServiceResourceCatalog
 	serviceResourceService *biz.ServiceResourceService
 	apiEndpoints           *biz.APIEndpointService
+	policies               *biz.AuthorizationPolicyService
+	pdpServiceCredential   string
 	auth                   *auth.Service
+}
+
+func (h *Handler) WithPDPServiceCredential(credential string) *Handler {
+	h.pdpServiceCredential = strings.TrimSpace(credential)
+	return h
 }
 
 // WithServiceResourceCatalog 注入只读服务资源目录，供服务资源查询接口使用。
@@ -217,18 +224,18 @@ func (h *Handler) ListRoles(w http.ResponseWriter, r *http.Request) {
 // CreateMenu 在指定服务资源下创建菜单或按钮节点。
 func (h *Handler) CreateMenu(w http.ResponseWriter, r *http.Request) {
 	var request struct {
-		ServiceResource string       `json:"service_resource"`
-		ParentID        *uuid.UUID   `json:"parent_id"`
-		Code            string       `json:"code"`
-		Name            string       `json:"name"`
-		Description     string       `json:"description"`
-		Type            biz.MenuType `json:"type"`
-		Path            string       `json:"path"`
-		Component       string       `json:"component"`
-		APIPath         string       `json:"api_path"`
-		HTTPMethod      string       `json:"http_method"`
-		Icon            string       `json:"icon"`
-		Sort            int          `json:"sort"`
+		ServiceResource string             `json:"service_resource"`
+		ParentID        *uuid.UUID         `json:"parent_id"`
+		Code            string             `json:"code"`
+		Name            string             `json:"name"`
+		Description     string             `json:"description"`
+		Type            biz.MenuType       `json:"type"`
+		Path            string             `json:"path"`
+		Component       string             `json:"component"`
+		APIPath         string             `json:"api_path"`
+		HTTPMethod      biz.MenuHTTPMethod `json:"http_method"`
+		Icon            string             `json:"icon"`
+		Sort            int                `json:"sort"`
 	}
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, err)
@@ -250,16 +257,16 @@ func (h *Handler) UpdateMenu(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request struct {
-		Code        string `json:"code"`
-		Name        string `json:"name"`
-		Description string `json:"description"`
-		Path        string `json:"path"`
-		Component   string `json:"component"`
-		APIPath     string `json:"api_path"`
-		HTTPMethod  string `json:"http_method"`
-		Icon        string `json:"icon"`
-		Sort        int    `json:"sort"`
-		Enabled     bool   `json:"enabled"`
+		Code        string             `json:"code"`
+		Name        string             `json:"name"`
+		Description string             `json:"description"`
+		Path        string             `json:"path"`
+		Component   string             `json:"component"`
+		APIPath     string             `json:"api_path"`
+		HTTPMethod  biz.MenuHTTPMethod `json:"http_method"`
+		Icon        string             `json:"icon"`
+		Sort        int                `json:"sort"`
+		Enabled     bool               `json:"enabled"`
 	}
 	if err := decodeJSON(r, &request); err != nil {
 		writeError(w, err)

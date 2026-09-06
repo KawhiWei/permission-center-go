@@ -94,13 +94,13 @@ export const PageHeader = ({
   actions,
 }: {
   title: string;
-  description: string;
+  description?: string;
   actions?: ReactNode;
 }) => (
   <div className="permission-page-header">
     <div>
       <h1>{title}</h1>
-      <p>{description}</p>
+      {description ? <p>{description}</p> : null}
     </div>
     {actions ? <Space>{actions}</Space> : null}
   </div>

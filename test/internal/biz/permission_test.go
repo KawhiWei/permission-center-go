@@ -126,12 +126,83 @@ func TestCreateMenuRejectsButtonWithoutMenuParent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	button, err := service.CreateMenu(ctx, &Menu{ServiceResource: "ops", ParentID: &menu.ID, Code: "items:create", Name: "Create", Type: MenuTypeButton, APIPath: "/v1/items", HTTPMethod: "POST"})
+	button, err := service.CreateMenu(ctx, &Menu{ServiceResource: "ops", ParentID: &menu.ID, Code: "items:create", Name: "Create", Type: MenuTypeButton, APIPath: " /v1/items ", HTTPMethod: " post "})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if button.ParentID == nil || *button.ParentID != menu.ID {
 		t.Fatalf("button parent = %v", button.ParentID)
+	}
+	if button.APIPath != "/v1/items" || button.HTTPMethod != "POST" {
+		t.Fatalf("button API metadata = %#v", button)
+	}
+	defaultMethodButton, err := service.CreateMenu(ctx, &Menu{ServiceResource: "ops", ParentID: &menu.ID, Code: "items:view", Name: "View", Type: MenuTypeButton, APIPath: "/v1/items/{id}"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if defaultMethodButton.HTTPMethod != MenuHTTPMethodGet {
+		t.Fatalf("default button HTTP method = %q", defaultMethodButton.HTTPMethod)
+	}
+}
+
+func TestCreateMenuRejectsButtonWithoutAPIPath(t *testing.T) {
+	parentID := uuid.New()
+	menus := &memoryMenuRepo{menus: map[uuid.UUID]*Menu{
+		parentID: {ID: parentID, ServiceResource: "ops", Code: "items", Name: "Items", Type: MenuTypeMenu, Enabled: true},
+	}}
+	_, err := NewPermissionService(nil, menus).CreateMenu(context.Background(), &Menu{
+		ServiceResource: "ops",
+		ParentID:        &parentID,
+		Code:            "items:create",
+		Name:            "Create",
+		Type:            MenuTypeButton,
+	})
+	if !errors.Is(err, ErrInvalidArgument) {
+		t.Fatalf("missing button API path error = %v", err)
+	}
+}
+
+func TestCreateMenuRejectsMenuWithAPIPath(t *testing.T) {
+	menus := &memoryMenuRepo{menus: map[uuid.UUID]*Menu{}}
+	_, err := NewPermissionService(nil, menus).CreateMenu(context.Background(), &Menu{
+		ServiceResource: "ops",
+		Code:            "items",
+		Name:            "Items",
+		Type:            MenuTypeMenu,
+		APIPath:         "/v1/items",
+	})
+	if !errors.Is(err, ErrInvalidArgument) {
+		t.Fatalf("menu API path error = %v", err)
+	}
+}
+
+func TestCreateMenuRejectsInvalidHTTPMethod(t *testing.T) {
+	parentID := uuid.New()
+	menus := &memoryMenuRepo{menus: map[uuid.UUID]*Menu{
+		parentID: {ID: parentID, ServiceResource: "ops", Code: "items", Name: "Items", Type: MenuTypeMenu, Enabled: true},
+	}}
+	service := NewPermissionService(nil, menus)
+	_, err := service.CreateMenu(context.Background(), &Menu{
+		ServiceResource: "ops",
+		ParentID:        &parentID,
+		Code:            "items:create",
+		Name:            "Create",
+		Type:            MenuTypeButton,
+		APIPath:         "/v1/items",
+		HTTPMethod:      "CONNECT",
+	})
+	if !errors.Is(err, ErrInvalidArgument) {
+		t.Fatalf("invalid button HTTP method error = %v", err)
+	}
+	_, err = service.CreateMenu(context.Background(), &Menu{
+		ServiceResource: "ops",
+		Code:            "settings",
+		Name:            "Settings",
+		Type:            MenuTypeMenu,
+		HTTPMethod:      MenuHTTPMethodGet,
+	})
+	if !errors.Is(err, ErrInvalidArgument) {
+		t.Fatalf("menu HTTP metadata error = %v", err)
 	}
 }
 
@@ -201,6 +272,7 @@ func TestUpdateMenuPreservesImmutableAndCreationFields(t *testing.T) {
 			Code:            "old-code",
 			Name:            "Old name",
 			APIPath:         "/old",
+			HTTPMethod:      "GET",
 			Enabled:         true,
 		},
 	}}

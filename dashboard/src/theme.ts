@@ -48,18 +48,3 @@ export const applyThemeMode = (theme: ThemeMode) => {
     window.localStorage.setItem(THEME_STORAGE_KEY, theme);
   }
 };
-
-export const subscribeThemeMode = (listener: (theme: ThemeMode) => void) => {
-  const observer = new MutationObserver(() => {
-    listener(getCurrentThemeMode());
-  });
-
-  observer.observe(document.documentElement, {
-    attributes: true,
-    attributeFilter: [THEME_ATTRIBUTE],
-  });
-
-  return () => {
-    observer.disconnect();
-  };
-};

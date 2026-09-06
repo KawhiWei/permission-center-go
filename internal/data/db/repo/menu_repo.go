@@ -25,6 +25,13 @@ func NewMenuRepository(pool *pgxpool.Pool) *MenuRepository {
 	return &MenuRepository{pool: pool}
 }
 
+func nullableMenuHTTPMethod(method biz.MenuHTTPMethod) any {
+	if method == "" {
+		return nil
+	}
+	return string(method)
+}
+
 func (r *MenuRepository) Create(ctx context.Context, menu *biz.Menu) (*biz.Menu, error) {
 	if menu == nil || strings.TrimSpace(menu.ServiceResource) == "" {
 		return nil, fmt.Errorf("%w: menu and service_resource are required", biz.ErrInvalidArgument)
@@ -55,7 +62,7 @@ func (r *MenuRepository) Create(ctx context.Context, menu *biz.Menu) (*biz.Menu,
 		menu.Path,
 		menu.Component,
 		menu.APIPath,
-		menu.HTTPMethod,
+		nullableMenuHTTPMethod(menu.HTTPMethod),
 		menu.Icon,
 		menu.Sort,
 		menu.Enabled,
@@ -120,7 +127,7 @@ func (r *MenuRepository) Update(ctx context.Context, menu *biz.Menu) (*biz.Menu,
 	actor := biz.AuditActorFromContext(ctx)
 	value, err := scanMenu(r.pool.QueryRow(ctx, query,
 		menu.ID, menu.Code, menu.Name, menu.Description, menu.Path,
-		menu.Component, menu.APIPath, menu.HTTPMethod, menu.Icon, menu.Sort,
+		menu.Component, menu.APIPath, nullableMenuHTTPMethod(menu.HTTPMethod), menu.Icon, menu.Sort,
 		menu.Enabled, actor.ID, actor.Name,
 	))
 	if err != nil {

@@ -206,7 +206,7 @@ func isAPIEndpointHTTPMethod(value string) bool {
 	}
 }
 
-// ImportSwaggerAPIEndpoints 将 Swagger/OpenAPI 文档中的 HTTP 操作导入为禁用端点。
+// ImportSwaggerAPIEndpoints 将 Swagger/OpenAPI 文档中的 HTTP 操作导入为启用端点。
 func (s *APIEndpointService) ImportSwaggerAPIEndpoints(ctx context.Context, request SwaggerImportRequest) (*SwaggerImportResult, error) {
 	if err := s.ensureReady(); err != nil {
 		return nil, err
@@ -251,7 +251,7 @@ func (s *APIEndpointService) ImportSwaggerAPIEndpoints(ctx context.Context, requ
 			Method:          operation.Method,
 			PathTemplate:    operation.PathTemplate,
 			Summary:         operation.Summary,
-			Enabled:         false,
+			Enabled:         true,
 		}
 		if _, err := s.CreateAPIEndpoint(ctx, value); err != nil {
 			if errors.Is(err, ErrAlreadyExists) {

@@ -52,7 +52,7 @@ func toBizMenu(value *model.Menu) *biz.Menu {
 		Path:        value.Path,
 		Component:   value.Component,
 		APIPath:     value.APIPath,
-		HTTPMethod:  value.HTTPMethod,
+		HTTPMethod:  biz.MenuHTTPMethod(value.HTTPMethod),
 		Icon:        value.Icon,
 		Sort:        value.Sort,
 		Enabled:     value.Enabled,

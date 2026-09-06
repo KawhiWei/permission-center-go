@@ -16,6 +16,7 @@ type Config struct {
 	Database        DatabaseConfig        `yaml:"database"`
 	OIDC            OIDCConfig            `yaml:"oidc"`
 	ServiceResource ServiceResourceConfig `yaml:"service_resource"`
+	PDP             PDPConfig             `yaml:"pdp"`
 }
 
 // ServiceResourceConfig 配置服务资源来源和 NexusAuth 连接信息。
@@ -60,6 +61,9 @@ func (c ServiceResourceConfig) TimeoutDuration() (time.Duration, error) {
 type HTTPConfig struct {
 	Addr string `yaml:"addr"`
 }
+type PDPConfig struct {
+	ServiceCredential string `yaml:"service_credential"`
+}
 type DatabaseConfig struct {
 	URL      string `yaml:"url"`
 	MaxConns int32  `yaml:"max_conns"`
@@ -99,12 +103,15 @@ func Load(path string) (*Config, error) {
 		cfg.HTTP.Addr = value
 	}
 	applyOIDCEnv(&cfg.OIDC)
+	if value := os.Getenv("PERMISSION_CENTER_PDP_SERVICE_CREDENTIAL"); value != "" {
+		cfg.PDP.ServiceCredential = value
+	}
 	if err := applyServiceResourceEnv(&cfg.ServiceResource); err != nil {
 		return nil, err
 	}
 	cfg.ServiceResource.Source = strings.ToLower(strings.TrimSpace(cfg.ServiceResource.Source))
 	if cfg.ServiceResource.Source == "" {
-		cfg.ServiceResource.Source = "local"
+		cfg.ServiceResource.Source = "nexusauth"
 	}
 	if cfg.ServiceResource.Source != "local" && cfg.ServiceResource.Source != "nexusauth" {
 		return nil, fmt.Errorf("service_resource.source must be local or nexusauth")

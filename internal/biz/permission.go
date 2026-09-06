@@ -18,6 +18,19 @@ const (
 	MenuTypeButton MenuType = "button"
 )
 
+// MenuHTTPMethod 表示按钮元数据允许记录的 HTTP 方法。
+type MenuHTTPMethod string
+
+const (
+	MenuHTTPMethodGet     MenuHTTPMethod = "GET"
+	MenuHTTPMethodPost    MenuHTTPMethod = "POST"
+	MenuHTTPMethodPut     MenuHTTPMethod = "PUT"
+	MenuHTTPMethodPatch   MenuHTTPMethod = "PATCH"
+	MenuHTTPMethodDelete  MenuHTTPMethod = "DELETE"
+	MenuHTTPMethodHead    MenuHTTPMethod = "HEAD"
+	MenuHTTPMethodOptions MenuHTTPMethod = "OPTIONS"
+)
+
 // Role 表示按服务资源作用域归属的角色及其审计信息。
 type Role struct {
 	BaseFields
@@ -32,20 +45,20 @@ type Role struct {
 // Menu 表示导航菜单或操作按钮；根节点的 ParentID 为 nil。
 type Menu struct {
 	BaseFields
-	ID              uuid.UUID  `json:"id"`
-	ServiceResource string     `json:"service_resource"`
-	ParentID        *uuid.UUID `json:"parent_id"`
-	Code            string     `json:"code"`
-	Name            string     `json:"name"`
-	Description     string     `json:"description"`
-	Type            MenuType   `json:"type"`
-	Path            string     `json:"path"`
-	Component       string     `json:"component"`
-	APIPath         string     `json:"api_path"`
-	HTTPMethod      string     `json:"http_method"`
-	Icon            string     `json:"icon"`
-	Sort            int        `json:"sort"`
-	Enabled         bool       `json:"enabled"`
+	ID              uuid.UUID      `json:"id"`
+	ServiceResource string         `json:"service_resource"`
+	ParentID        *uuid.UUID     `json:"parent_id"`
+	Code            string         `json:"code"`
+	Name            string         `json:"name"`
+	Description     string         `json:"description"`
+	Type            MenuType       `json:"type"`
+	Path            string         `json:"path"`
+	Component       string         `json:"component"`
+	APIPath         string         `json:"api_path"`
+	HTTPMethod      MenuHTTPMethod `json:"http_method"`
+	Icon            string         `json:"icon"`
+	Sort            int            `json:"sort"`
+	Enabled         bool           `json:"enabled"`
 }
 
 // MenuTreeNode 表示包含子节点的菜单树节点。
@@ -429,7 +442,7 @@ func validateID(value, name string) (string, error) {
 	return value, nil
 }
 
-// validateMenu 校验菜单类型以及父节点和 API 路径配置。
+// validateMenu 校验菜单类型以及按钮父节点和 API 路径配置。
 func validateMenu(menu *Menu) error {
 	code, name, err := validateCodeAndName(menu.Code, menu.Name)
 	if err != nil {
@@ -442,11 +455,30 @@ func validateMenu(menu *Menu) error {
 	if menu.Type == MenuTypeButton && menu.ParentID == nil {
 		return fmt.Errorf("%w: button must have a menu parent", ErrInvalidArgument)
 	}
-	if menu.Type == MenuTypeMenu && menu.APIPath != "" {
-		return fmt.Errorf("%w: menu cannot define api_path", ErrInvalidArgument)
+	menu.APIPath = strings.TrimSpace(menu.APIPath)
+	menu.HTTPMethod = MenuHTTPMethod(strings.ToUpper(strings.TrimSpace(string(menu.HTTPMethod))))
+	if menu.Type == MenuTypeMenu && (menu.APIPath != "" || menu.HTTPMethod != "") {
+		return fmt.Errorf("%w: menu cannot define API metadata", ErrInvalidArgument)
 	}
-	if menu.Type == MenuTypeButton && strings.TrimSpace(menu.APIPath) == "" {
+	if menu.Type == MenuTypeButton && menu.APIPath == "" {
 		return fmt.Errorf("%w: button api_path is required", ErrInvalidArgument)
 	}
+	if menu.Type == MenuTypeButton && menu.HTTPMethod == "" {
+		menu.HTTPMethod = MenuHTTPMethodGet
+	}
+	if menu.Type == MenuTypeButton && !menu.HTTPMethod.Valid() {
+		return fmt.Errorf("%w: unsupported button http_method %q", ErrInvalidArgument, menu.HTTPMethod)
+	}
 	return nil
+}
+
+// Valid 判断按钮 HTTP 方法是否属于受支持的枚举集合。
+func (m MenuHTTPMethod) Valid() bool {
+	switch m {
+	case MenuHTTPMethodGet, MenuHTTPMethodPost, MenuHTTPMethodPut, MenuHTTPMethodPatch,
+		MenuHTTPMethodDelete, MenuHTTPMethodHead, MenuHTTPMethodOptions:
+		return true
+	default:
+		return false
+	}
 }

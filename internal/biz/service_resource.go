@@ -306,7 +306,7 @@ func normalizeRemoteServiceResource(resource *ServiceResource) (*ServiceResource
 func normalizeServiceResourceSource(source string) (string, error) {
 	source = strings.ToLower(strings.TrimSpace(source))
 	if source == "" {
-		source = ServiceResourceSourceLocal
+		source = ServiceResourceSourceNexusAuth
 	}
 	if source != ServiceResourceSourceLocal && source != ServiceResourceSourceNexusAuth {
 		return "", fmt.Errorf("%w: service_resource.source must be local or nexusauth", ErrInvalidArgument)

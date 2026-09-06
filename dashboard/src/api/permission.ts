@@ -55,6 +55,7 @@ export type Role = {
 };
 
 export type MenuType = 'menu' | 'button';
+export type MenuHTTPMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS';
 
 export type Menu = {
   id: string;
@@ -67,7 +68,7 @@ export type Menu = {
   path: string;
   component: string;
   apiPath: string;
-  httpMethod: string;
+  httpMethod: MenuHTTPMethod | '';
   icon: string;
   sort: number;
   enabled: boolean;
@@ -104,7 +105,7 @@ export type CreateMenuRequest = {
   path?: string;
   component?: string;
   api_path?: string;
-  http_method?: string;
+  http_method?: MenuHTTPMethod | '';
   icon?: string;
   sort?: number;
 };
@@ -116,7 +117,7 @@ export type UpdateMenuRequest = {
   path: string;
   component: string;
   api_path: string;
-  http_method: string;
+  http_method: MenuHTTPMethod | '';
   icon: string;
   sort: number;
   enabled: boolean;
@@ -165,6 +166,21 @@ export type ImportSwaggerAPIEndpointsResult = {
   created: number;
   skipped: number;
 };
+
+export type PolicyEffect = 'allow' | 'deny';
+export type PolicyStatus = 'draft' | 'published' | 'disabled' | 'archived';
+export type PolicyScopeLevel = 'api';
+export type PolicyValueType = 'string' | 'number' | 'boolean' | 'string_list' | 'number_list';
+export type PolicyComparisonOperator = 'eq' | 'neq' | 'in' | 'not_in' | 'contains' | 'exists';
+
+export type PolicyValueRef = { source: 'subject' | 'resource' | 'request' | 'context' | 'literal'; path?: string; type: PolicyValueType; value?: unknown };
+export type PolicyCondition = { all?: PolicyCondition[]; any?: PolicyCondition[]; not?: PolicyCondition; comparison?: { left: PolicyValueRef; op: PolicyComparisonOperator; right?: PolicyValueRef } };
+export type AuthorizationPolicy = {
+  id: string; serviceResource: string; code: string; name: string; description: string; effect: PolicyEffect; status: PolicyStatus; scopeLevel: PolicyScopeLevel; priority: number; condition: PolicyCondition | null; obligations: { row_filter?: unknown; field_rules?: unknown[] }; currentVersion: number; roleIds: string[]; endpointIds: string[]; updatedAt?: string;
+};
+export type PolicyRequest = { service_resource?: string; code: string; name: string; description: string; effect: PolicyEffect; scope_level: PolicyScopeLevel; priority: number; condition?: PolicyCondition | null; obligations?: { row_filter?: unknown; field_rules?: unknown[] }; role_ids: string[]; endpoint_ids: string[] };
+export type PDPDecision = { decision: 'allow' | 'deny'; reasonCode: string; matchedPolicyIds: string[]; snapshotVersion: number; obligations: { row_filter?: unknown; field_rules?: unknown[] } };
+export type PDPDecisionRequest = { request_id?: string; service_resource: string; tenant_id: string; subject: { id: string; attributes?: Record<string, unknown> }; action: { kind: 'http'; method: string }; resource: { kind: 'api_endpoint'; endpoint_id: string; attributes?: Record<string, unknown> }; context?: Record<string, unknown> };
 
 type RawRecord = Record<string, unknown>;
 
@@ -256,7 +272,7 @@ const normalizeMenu = (value: unknown): Menu => {
     path: rawString(record, 'path', 'Path', 'route', 'Route'),
     component: rawString(record, 'component', 'Component'),
     apiPath: rawString(record, 'api_path', 'apiPath', 'APIPath', 'action', 'Action'),
-    httpMethod: rawString(record, 'http_method', 'httpMethod', 'HTTPMethod'),
+    httpMethod: normalizeMenuHTTPMethod(rawString(record, 'http_method', 'httpMethod', 'HTTPMethod')),
     icon: rawString(record, 'icon', 'Icon'),
     sort: rawNumber(record, 'sort', 'Sort', 'sort_order', 'sortOrder', 'SortOrder'),
     enabled: rawBoolean(record, 'enabled', 'Enabled'),
@@ -268,6 +284,22 @@ const normalizeMenu = (value: unknown): Menu => {
     updatedAt: rawDate(record, 'updated_at', 'updatedAt', 'UpdatedAt'),
     children,
   };
+};
+
+const normalizeMenuHTTPMethod = (value: string): MenuHTTPMethod | '' => {
+  const method = value.trim().toUpperCase();
+  switch (method) {
+    case 'GET':
+    case 'POST':
+    case 'PUT':
+    case 'PATCH':
+    case 'DELETE':
+    case 'HEAD':
+    case 'OPTIONS':
+      return method;
+    default:
+      return '';
+  }
 };
 
 const normalizeAPIEndpoint = (value: unknown): APIEndpoint => {
@@ -289,6 +321,23 @@ const normalizeAPIEndpoint = (value: unknown): APIEndpoint => {
   };
 };
 
+const rawStringArray = (record: RawRecord, ...keys: string[]): string[] => {
+  for (const key of keys) { const value = record[key]; if (Array.isArray(value)) return value.filter((item): item is string => typeof item === 'string'); }
+  return [];
+};
+const rawObject = (record: RawRecord, ...keys: string[]): Record<string, unknown> => {
+  for (const key of keys) { const value = record[key]; if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>; }
+  return {};
+};
+const normalizePolicy = (value: unknown): AuthorizationPolicy => {
+  const record = (value && typeof value === 'object' ? value : {}) as RawRecord;
+  const effect = rawString(record, 'effect', 'Effect') === 'deny' ? 'deny' : 'allow';
+  const statusValue = rawString(record, 'status', 'Status');
+  const status: PolicyStatus = statusValue === 'published' || statusValue === 'disabled' || statusValue === 'archived' ? statusValue : 'draft';
+  return { id: rawString(record, 'id', 'ID'), serviceResource: rawString(record, 'service_resource', 'serviceResource', 'ServiceResource'), code: rawString(record, 'code', 'Code'), name: rawString(record, 'name', 'Name'), description: rawString(record, 'description', 'Description'), effect, status, scopeLevel: 'api', priority: rawNumber(record, 'priority', 'Priority'), condition: (record.condition && typeof record.condition === 'object' ? record.condition as PolicyCondition : null), obligations: rawObject(record, 'obligations', 'Obligations'), currentVersion: rawNumber(record, 'current_version', 'currentVersion', 'CurrentVersion'), roleIds: rawStringArray(record, 'role_ids', 'roleIds', 'RoleIDs'), endpointIds: rawStringArray(record, 'endpoint_ids', 'endpointIds', 'EndpointIDs'), updatedAt: rawDate(record, 'updated_at', 'updatedAt', 'UpdatedAt') };
+};
+const normalizePDPDecision = (value: unknown): PDPDecision => { const record = (value && typeof value === 'object' ? value : {}) as RawRecord; return { decision: rawString(record, 'decision', 'Decision') === 'allow' ? 'allow' : 'deny', reasonCode: rawString(record, 'reason_code', 'reasonCode', 'ReasonCode'), matchedPolicyIds: rawStringArray(record, 'matched_policy_ids', 'matchedPolicyIds', 'MatchedPolicyIDs'), snapshotVersion: rawNumber(record, 'snapshot_version', 'snapshotVersion', 'SnapshotVersion'), obligations: rawObject(record, 'obligations', 'Obligations') }; };
+
 const readItems = (value: unknown): unknown[] => {
   if (Array.isArray(value)) {
     return value;
@@ -309,12 +358,18 @@ const readItem = (value: unknown): unknown => {
   return record.item ?? record.Item ?? record.data ?? record.Data ?? value;
 };
 
-const readIDs = (value: unknown, key: 'menu_ids' | 'role_ids'): string[] => {
+const readIDs = (value: unknown, key: 'role_ids'): string[] => {
   if (!value || typeof value !== 'object') {
     return [];
   }
   const values = (value as RawRecord)[key];
   return Array.isArray(values) ? values.filter((item): item is string => typeof item === 'string') : [];
+};
+
+const dispatchMenuChange = (serviceResource?: string) => {
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(MENU_CHANGE_EVENT, { detail: serviceResource }));
+  }
 };
 
 export const getStoredServiceResource = (): string => {
@@ -345,12 +400,6 @@ export const setStoredServiceResource = (serviceResource: string): string => {
     }
   }
   return next;
-};
-
-const dispatchMenuChange = (serviceResource?: string) => {
-  if (typeof window !== 'undefined') {
-    window.dispatchEvent(new CustomEvent(MENU_CHANGE_EVENT, { detail: serviceResource }));
-  }
 };
 
 export const listServiceResources = async (): Promise<ServiceResourceList> => {
@@ -459,14 +508,16 @@ export const importSwaggerAPIEndpoints = async (
   };
 };
 
-export const getRoleMenuIDs = async (roleID: string): Promise<string[]> => {
-  const response = await request.get<unknown>(`/v1/roles/${encodeURIComponent(roleID)}/menus`);
-  return readIDs(response, 'menu_ids');
+export const listAuthorizationPolicies = async (serviceResource: string): Promise<AuthorizationPolicy[]> => {
+  const response = await request.get<unknown>(`/v1/authorization/policies?service_resource=${encodeURIComponent(serviceResource.trim())}`);
+  return readItems(response).map(normalizePolicy);
 };
-
-export const replaceRoleMenus = async (roleID: string, menuIDs: string[]): Promise<void> => {
-  await request.put<unknown>(`/v1/roles/${encodeURIComponent(roleID)}/menus`, { menu_ids: menuIDs });
-};
+export const createAuthorizationPolicy = async (payload: PolicyRequest): Promise<AuthorizationPolicy> => normalizePolicy(readItem(await request.post<unknown>('/v1/authorization/policies', payload)));
+export const updateAuthorizationPolicy = async (id: string, payload: PolicyRequest): Promise<AuthorizationPolicy> => normalizePolicy(readItem(await request.put<unknown>(`/v1/authorization/policies/${encodeURIComponent(id)}`, payload)));
+export const deleteAuthorizationPolicy = async (id: string): Promise<void> => { await request.delete<unknown>(`/v1/authorization/policies/${encodeURIComponent(id)}`); };
+export const publishAuthorizationPolicy = async (id: string): Promise<AuthorizationPolicy> => normalizePolicy(readItem(await request.post<unknown>(`/v1/authorization/policies/${encodeURIComponent(id)}/publish`)));
+export const rollbackAuthorizationPolicy = async (id: string, version: number): Promise<AuthorizationPolicy> => normalizePolicy(readItem(await request.post<unknown>(`/v1/authorization/policies/${encodeURIComponent(id)}/rollback`, { version })));
+export const decidePDP = async (payload: PDPDecisionRequest): Promise<PDPDecision> => normalizePDPDecision(readItem(await request.post<unknown>('/v1/authorization/policies/simulate', payload)));
 
 export const getUserRoleIDs = async (userID: string, serviceResource: string): Promise<string[]> => {
   const response = await request.get<unknown>(

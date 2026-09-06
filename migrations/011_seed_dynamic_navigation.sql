@@ -37,9 +37,8 @@ BEGIN
     SELECT p_service_resource, permission_group_id, 'menu', definition.code, definition.name, definition.description,
            definition.route, definition.component, definition.icon, definition.sort_order, '{}'::JSONB, TRUE
       FROM (VALUES
-        ('role-management', '角色管理', '维护服务资源下的角色', '/roles', '/permission-center/role-management/index.tsx', 'usergroup', 10),
-        ('menu-management', '菜单与按钮管理', '维护动态导航和按钮权限', '/menus', '/permission-center/menu-management/index.tsx', 'menu', 20),
-        ('user-role-management', '用户角色绑定', '维护用户与角色的关联', '/user-roles', '/permission-center/user-role-management/index.tsx', 'user', 30)
+        ('role-management', '角色管理', '维护服务资源下的角色和用户分配', '/roles', '/permission-center/role-management/index.tsx', 'usergroup', 10),
+        ('menu-management', '菜单与按钮管理', '维护动态导航和按钮权限', '/menus', '/permission-center/menu-management/index.tsx', 'menu', 20)
       ) AS definition(code, name, description, route, component, icon, sort_order)
      WHERE NOT EXISTS (
         SELECT 1 FROM menus existing

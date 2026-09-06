@@ -16,6 +16,7 @@ type Application struct {
 	Permissions      *biz.PermissionService
 	ServiceResources *biz.ServiceResourceService
 	APIEndpoints     *biz.APIEndpointService
+	Policies         *biz.AuthorizationPolicyService
 	Auth             *auth.Service
 }
 
@@ -41,11 +42,13 @@ func New(ctx context.Context, cfg *config.Config) (*Application, error) {
 	}
 	permissions := biz.NewPermissionService(roles, menus, userRoles).WithServiceResourceCatalog(serviceResources)
 	apiEndpoints := biz.NewAPIEndpointService(repo.NewAPIEndpointRepository(pool)).WithServiceResourceCatalog(serviceResources)
+	policies := biz.NewAuthorizationPolicyService(repo.NewAuthorizationPolicyRepository(pool), repo.NewAPIEndpointRepository(pool), roles, userRoles).WithServiceResourceCatalog(serviceResources)
 	return &Application{
 		Pool:             pool,
 		Permissions:      permissions,
 		ServiceResources: serviceResources,
 		APIEndpoints:     apiEndpoints,
+		Policies:         policies,
 		Auth:             authenticator,
 	}, nil
 }

@@ -224,6 +224,17 @@ func TestMenuEndpointsUseMenuNaming(t *testing.T) {
 		t.Fatalf("create menu status = %d body=%s", createResponse.Code, createResponse.Body.String())
 	}
 
+	buttonCreateRequest := httptest.NewRequest(http.MethodPost, "/v1/menus", strings.NewReader(`{"service_resource":"admin","parent_id":"`+menuID.String()+`","code":"items:create","name":"Create","type":"button","api_path":"/v1/items","http_method":"POST"}`))
+	buttonCreateResponse := httptest.NewRecorder()
+	server.ServeHTTP(buttonCreateResponse, buttonCreateRequest)
+	if buttonCreateResponse.Code != http.StatusCreated {
+		t.Fatalf("create button status = %d body=%s", buttonCreateResponse.Code, buttonCreateResponse.Body.String())
+	}
+	if !strings.Contains(buttonCreateResponse.Body.String(), `"api_path":"/v1/items"`) ||
+		!strings.Contains(buttonCreateResponse.Body.String(), `"http_method":"POST"`) {
+		t.Fatalf("created button API metadata = %s", buttonCreateResponse.Body.String())
+	}
+
 	grantRequest := httptest.NewRequest(http.MethodPut, "/v1/roles/role-1/menus", strings.NewReader(`{"menu_ids":["`+menuID.String()+`"]}`))
 	grantResponse := httptest.NewRecorder()
 	server.ServeHTTP(grantResponse, grantRequest)
@@ -262,6 +273,32 @@ func TestMenuEndpointsUseMenuNaming(t *testing.T) {
 	server.ServeHTTP(legacyResponse, legacyRequest)
 	if legacyResponse.Code != http.StatusNotFound {
 		t.Fatalf("legacy resource route status = %d", legacyResponse.Code)
+	}
+}
+
+func TestMenuEndpointsRejectInvalidAPIMetadata(t *testing.T) {
+	rootID := uuid.New()
+	menus := &testMenuRepo{values: map[uuid.UUID]*biz.Menu{
+		rootID: {ID: rootID, ServiceResource: "admin", Code: "items", Name: "Items", Type: biz.MenuTypeMenu, Enabled: true},
+	}}
+	server := NewServer(NewHandler(biz.NewPermissionService(&testRoleRepo{values: map[string]*biz.Role{}}, menus)))
+
+	buttonResponse := httptest.NewRecorder()
+	server.ServeHTTP(buttonResponse, httptest.NewRequest(http.MethodPost, "/v1/menus", strings.NewReader(`{"service_resource":"admin","code":"create","name":"Create","type":"button","parent_id":"`+rootID.String()+`"}`)))
+	if buttonResponse.Code != http.StatusBadRequest {
+		t.Fatalf("button without API path status = %d body=%s", buttonResponse.Code, buttonResponse.Body.String())
+	}
+
+	menuResponse := httptest.NewRecorder()
+	server.ServeHTTP(menuResponse, httptest.NewRequest(http.MethodPost, "/v1/menus", strings.NewReader(`{"service_resource":"admin","code":"settings","name":"Settings","type":"menu","api_path":"/v1/settings"}`)))
+	if menuResponse.Code != http.StatusBadRequest {
+		t.Fatalf("menu with API path status = %d body=%s", menuResponse.Code, menuResponse.Body.String())
+	}
+
+	methodResponse := httptest.NewRecorder()
+	server.ServeHTTP(methodResponse, httptest.NewRequest(http.MethodPost, "/v1/menus", strings.NewReader(`{"service_resource":"admin","code":"connect","name":"Connect","type":"button","parent_id":"`+rootID.String()+`","api_path":"/v1/connect","http_method":"CONNECT"}`)))
+	if methodResponse.Code != http.StatusBadRequest {
+		t.Fatalf("button with invalid HTTP method status = %d body=%s", methodResponse.Code, methodResponse.Body.String())
 	}
 }
 

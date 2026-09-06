@@ -31,7 +31,9 @@ func main() {
 			httpserver.NewHandler(application.Permissions, application.Auth).
 				WithServiceResourceCatalog(application.ServiceResources).
 				WithServiceResourceService(application.ServiceResources).
-				WithAPIEndpointService(application.APIEndpoints),
+				WithAPIEndpointService(application.APIEndpoints).
+				WithAuthorizationPolicyService(application.Policies).
+				WithPDPServiceCredential(cfg.PDP.ServiceCredential),
 			application.Auth.Middleware,
 		),
 	}

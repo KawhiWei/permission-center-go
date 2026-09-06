@@ -116,7 +116,7 @@ oidc: {enabled: false}
 	}
 }
 
-func TestLoadDefaultsServiceResourceToLocal(t *testing.T) {
+func TestLoadDefaultsServiceResourceToNexusAuth(t *testing.T) {
 	clearConfigEnv(t)
 	configPath := filepath.Join(t.TempDir(), "app.yaml")
 	contents := []byte(`
@@ -127,11 +127,13 @@ oidc: {enabled: false}
 	if err := os.WriteFile(configPath, contents, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	t.Setenv("PERMISSION_CENTER_SERVICE_RESOURCE_NEXUSAUTH_BASE_URL", "http://nexus-auth:5100")
+	t.Setenv("PERMISSION_CENTER_SERVICE_RESOURCE_API_KEY", "directory-token")
 	cfg, err := Load(configPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.ServiceResource.Source != "local" {
+	if cfg.ServiceResource.Source != "nexusauth" {
 		t.Fatalf("default service-resource source = %q", cfg.ServiceResource.Source)
 	}
 }

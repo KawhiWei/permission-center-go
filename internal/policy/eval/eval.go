@@ -1,0 +1,157 @@
+// Package eval is the I/O-free PDP evaluator. Its combining algorithm is deny-overrides.
+package eval
+
+import (
+	"fmt"
+	"github.com/google/uuid"
+	"github.com/luck/permission-center-go/internal/policy/model"
+	"reflect"
+	"strings"
+)
+
+func Evaluate(input model.Input, snapshots []model.Snapshot) (model.Result, error) {
+	if strings.TrimSpace(input.ServiceResource) == "" || strings.TrimSpace(input.TenantID) == "" || strings.TrimSpace(input.Subject.ID) == "" || input.Resource.Kind != model.TargetAPIEndpoint || input.Resource.EndpointID == uuid.Nil || !input.Action.Kind.Valid() {
+		return model.Result{Decision: model.DecisionDeny, ReasonCode: model.ReasonInvalidInput}, fmt.Errorf("service_resource, tenant_id, subject.id and endpoint_id are required")
+	}
+	result := model.Result{Decision: model.DecisionDeny, ReasonCode: model.ReasonDefaultDeny}
+	allow := false
+	for _, snapshot := range snapshots {
+		if snapshot.ServiceResource != input.ServiceResource || snapshot.ScopeLevel != model.ScopeAPI || !hasEndpoint(snapshot.EndpointIDs, input.Resource.EndpointID) || !hasRole(snapshot.RoleIDs, input.Subject.RoleIDs) {
+			continue
+		}
+		matches, err := matchesCondition(snapshot.Condition, input)
+		if err != nil {
+			return result, err
+		}
+		if !matches {
+			continue
+		}
+		result.MatchedPolicyIDs = append(result.MatchedPolicyIDs, snapshot.PolicyID)
+		if snapshot.Version > result.SnapshotVersion {
+			result.SnapshotVersion = snapshot.Version
+		}
+		if snapshot.Effect == model.EffectDeny {
+			result.Decision = model.DecisionDeny
+			result.ReasonCode = model.ReasonExplicitDeny
+			return result, nil
+		}
+		allow = true
+	}
+	if allow {
+		result.Decision = model.DecisionAllow
+		result.ReasonCode = model.ReasonAllowedByPolicy
+	}
+	return result, nil
+}
+func hasEndpoint(values []uuid.UUID, id uuid.UUID) bool {
+	for _, value := range values {
+		if value == id {
+			return true
+		}
+	}
+	return false
+}
+func hasRole(policy, subject []string) bool {
+	for _, p := range policy {
+		for _, s := range subject {
+			if p == s {
+				return true
+			}
+		}
+	}
+	return false
+}
+func matchesCondition(condition *model.Condition, input model.Input) (bool, error) {
+	if condition == nil {
+		return true, nil
+	}
+	if len(condition.All) > 0 {
+		for i := range condition.All {
+			ok, e := matchesCondition(&condition.All[i], input)
+			if e != nil || !ok {
+				return ok, e
+			}
+		}
+		return true, nil
+	}
+	if len(condition.Any) > 0 {
+		for i := range condition.Any {
+			ok, e := matchesCondition(&condition.Any[i], input)
+			if e != nil {
+				return false, e
+			}
+			if ok {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+	if condition.Not != nil {
+		ok, e := matchesCondition(condition.Not, input)
+		return !ok, e
+	}
+	return comparison(*condition.Comparison, input)
+}
+func comparison(value model.Comparison, input model.Input) (bool, error) {
+	left, exists, err := resolve(value.Left, input)
+	if err != nil {
+		return false, err
+	}
+	if value.Op == model.OpExists {
+		return exists, nil
+	}
+	right, _, err := resolve(*value.Right, input)
+	if err != nil {
+		return false, err
+	}
+	switch value.Op {
+	case model.OpEq:
+		return reflect.DeepEqual(left, right), nil
+	case model.OpNeq:
+		return !reflect.DeepEqual(left, right), nil
+	case model.OpIn:
+		return contains(right, left), nil
+	case model.OpNotIn:
+		return !contains(right, left), nil
+	case model.OpContains:
+		return contains(left, right), nil
+	}
+	return false, fmt.Errorf("unsupported operator")
+}
+func resolve(ref model.ValueRef, input model.Input) (any, bool, error) {
+	if ref.Source == model.SourceLiteral {
+		return ref.Value, true, nil
+	}
+	var root map[string]any
+	switch ref.Source {
+	case model.SourceSubject:
+		root = input.Subject.Attributes
+		if ref.Path == "id" {
+			return input.Subject.ID, true, nil
+		}
+	case model.SourceResource:
+		root = input.Resource.Attributes
+	case model.SourceRequest:
+		root = map[string]any{"tenant_id": input.TenantID, "method": input.Action.Method}
+	case model.SourceContext:
+		root = input.Context
+	}
+	value, ok := root[ref.Path]
+	return value, ok, nil
+}
+func contains(container, value any) bool {
+	rv := reflect.ValueOf(container)
+	if rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array && rv.Kind() != reflect.String {
+		return false
+	}
+	if rv.Kind() == reflect.String {
+		v, ok := value.(string)
+		return ok && strings.Contains(rv.String(), v)
+	}
+	for i := 0; i < rv.Len(); i++ {
+		if reflect.DeepEqual(rv.Index(i).Interface(), value) {
+			return true
+		}
+	}
+	return false
+}
