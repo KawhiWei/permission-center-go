@@ -4,16 +4,13 @@
 
 本项目实现自有的策略决策点（PDP），不集成 OPA，不使用 Rego，不部署 OPA 服务。参考 OPA 的是架构原则：策略与业务代码解耦、PEP 和 PDP 职责分离、结构化决策输入输出、默认拒绝和可审计。
 
-首期范围是 API 接口级授权，同时稳定以下扩展点：
-
-- 行级：返回与存储引擎无关的结构化过滤表达式。
-- 属性级：返回字段读、写、脱敏和拒绝义务。
-- 多租户：`tenant_id` 是决策输入的必填安全边界，不得由请求参数直接信任。
+当前范围包含 API 接口级授权和单个业务对象的数据级 ABAC 授权。`tenant_id` 是决策输入的必填安全边界，不得由请求参数直接信任。
 
 非目标：
 
 - 菜单和按钮不参与 API 授权决策。
 - PDP 不查询业务数据库，不拥有业务行数据。
+- 不生成批量查询的行过滤 SQL，也不返回字段脱敏规则。
 - 不允许策略中存储 Go、JavaScript、SQL 或其他可执行脚本。
 
 ## 2. 责任分层
@@ -35,13 +32,13 @@
 
 ### PEP
 
-PEP 是业务 API 的必经入口，建议以 Go middleware/SDK 实现。PEP 负责：
+PEP 是业务 API 的必经入口，可直接通过 HTTP 调用 PDP。PEP 负责：
 
 1. 从已验证的会话或 token 取得 subject 和 tenant，不信任客户端自报值。
 2. 使用路由模板而不是原始 URL 定位已登记 API 端点。
 3. 收集决策所需的最小上下文并请求 PDP。
 4. `deny` 返回 HTTP 403；PDP 不可用时默认失败关闭。
-5. 行级和字段级阶段执行 PDP 返回的 obligations。
+5. 根据路由场景固定选择 `api` 或 `data`，不能让浏览器自由指定鉴权类型。
 
 ### PDP
 
@@ -61,8 +58,8 @@ role_menus                     policy_role_bindings
 
 - `role_menus` 只用于导航和操作按钮可见性，它不是安全边界。
 - 按钮保留稳定 `code`，并可配置一组 `api_path` 和 `http_method`，用于描述该 UI 操作通常触发的单个 API。它们是界面元数据和管理辅助引用，不是 PDP 的授权事实来源，也不建立菜单与授权策略的关联。
-- API 端点是 PDP 首期的资源对象。策略分别关联角色和 API 端点。
-- 现有 `authorization_api_endpoint_roles` 是直接 RBAC 绑定，不应作为新 PDP 的事实来源，实施 PDP 时应迁移并删除。
+- API 端点是 PDP 的资源对象。策略分别关联角色和 API 端点。
+- API 与角色不建立直接绑定，PDP 只读取已发布策略中的角色和端点目标。
 
 ## 4. 枚举与类型
 
@@ -72,22 +69,21 @@ Go 中全部使用带类型的 string enum 并实现 `Validate()`。PostgreSQL �
 | --- | --- |
 | `PolicyEffect` | `allow`, `deny` |
 | `PolicyStatus` | `draft`, `published`, `disabled`, `archived` |
-| `ScopeLevel` | `api`, `row`, `field` |
-| `TargetKind` | `api_endpoint`, `resource_type` |
+| `AuthorizationType` | `api`, `data` |
+| `TargetKind` | `api_endpoint` |
 | `CombiningAlgorithm` | `deny_overrides` |
 | `Decision` | `allow`, `deny` |
 | `ValueSource` | `subject`, `resource`, `request`, `context`, `literal` |
 | `ValueType` | `string`, `number`, `boolean`, `timestamp`, `string_list`, `number_list` |
 | `LogicalOperator` | `all`, `any`, `not` |
 | `ComparisonOperator` | `eq`, `neq`, `in`, `not_in`, `contains`, `exists`, `lt`, `lte`, `gt`, `gte`, `starts_with`, `ends_with` |
-| `FieldAccess` | `read`, `write`, `read_write`, `mask`, `deny` |
 | `ReasonCode` | `allowed_by_policy`, `explicit_deny`, `default_deny`, `scope_mismatch`, `endpoint_disabled`, `invalid_input`, `engine_unavailable` |
 
-首期只开放实际需要的操作符。新增操作符必须同时提供类型检查、评估器测试和负向用例，不支持任意函数调用。
+只开放实际需要的操作符。新增操作符必须同时提供类型检查、评估器测试和负向用例，不支持任意函数调用。
 
 ## 5. 数据模型
 
-### 首期必需表
+### 必需表
 
 `authorization_policies`
 
@@ -97,10 +93,9 @@ Go 中全部使用带类型的 string enum 并实现 `Validate()`。PostgreSQL �
 - `name`, `description`
 - `effect PolicyEffect`
 - `status PolicyStatus`
-- `scope_level ScopeLevel`，首期只允许 `api`
+- `authorization_type AuthorizationType`，`api` 表示接口级授权，`data` 表示针对具体业务数据属性的对象级授权
 - `priority integer`
 - `condition jsonb`，结构化 DSL AST
-- `obligations jsonb`，首期为空对象
 - `current_version integer`
 - 公共审计与软删除字段
 
@@ -135,10 +130,6 @@ Go 中全部使用带类型的 string enum 并实现 `Validate()`。PostgreSQL �
 - `latency_ms`, `occurred_at`
 - 不记录 token、密钥和完整敏感业务属性
 
-### 未来扩展表
-
-`authorization_resource_types` 定义业务实体类型、属性 schema、租户字段和主键字段。`authorization_policy_resource_targets` 将策略关联到实体类型和业务动作。不在权限中心保存业务实体行。
-
 ## 6. 结构化策略 DSL
 
 策略条件是受 schema 约束的 AST，不是文本脚本。示例：
@@ -166,9 +157,12 @@ Go 中全部使用带类型的 string enum 并实现 `Validate()`。PostgreSQL �
 
 `POST /v1/pdp/decisions`
 
+决策请求使用必填的 `authorization_type` 选择运行策略：`api` 判断是否允许访问 API 端点，`data` 结合当前业务对象的属性进行 allow/deny 判断。字段缺失或值未知时直接拒绝。`attributes` 保持可选，只有被策略条件引用时才需要传入，缺失属性不会匹配比较条件。
+
 ```json
 {
   "request_id": "req-01",
+  "authorization_type": "data",
   "service_resource": "order-service",
   "tenant_id": "tenant-a",
   "subject": {
@@ -191,15 +185,11 @@ Go 中全部使用带类型的 string enum 并实现 `Validate()`。PostgreSQL �
   "decision": "allow",
   "reason_code": "allowed_by_policy",
   "matched_policy_ids": ["00000000-0000-0000-0000-000000000003"],
-  "snapshot_version": 12,
-  "obligations": {
-    "row_filter": null,
-    "field_rules": []
-  }
+  "snapshot_version": 12
 }
 ```
 
-决策请求不接受 `role_ids`。首期由权限中心根据已验证 subject 和 service resource 加载有效角色，再生成只供评估器使用的内部输入；后续可使用权限中心签名的短期上下文减少查询。
+决策请求不接受 `role_ids`。权限中心根据已验证 subject 和 service resource 加载有效角色，再生成只供评估器使用的内部输入。
 
 ## 8. 评估算法
 
@@ -210,55 +200,19 @@ Go 中全部使用带类型的 string enum 并实现 `Validate()`。PostgreSQL �
 5. 任一匹配 `deny` 策略则拒绝。
 6. 无 deny 且至少一条 `allow` 匹配则允许。
 7. 其余情况统一 `deny/default_deny`。
-8. 行级和字段级 obligations 以“更严格者优先”合并，冲突时拒绝。
 
-`priority` 用于稳定评估顺序、解释和同效果义务合并，不得让高优先级 allow 覆盖 deny。首期组合算法只开放 `deny_overrides`。
+`priority` 用于稳定评估顺序和解释，不得让高优先级 allow 覆盖 deny。当前组合算法只开放 `deny_overrides`。
 
-## 9. 行级与属性级预留
+## 9. 运行时与安全
 
-### 行级
-
-PDP 返回中立 AST，不返回 SQL：
-
-```json
-{
-  "row_filter": {
-    "all": [
-      { "field": "tenant_id", "op": "eq", "value_from": "subject.tenant_id" },
-      { "field": "owner_id", "op": "eq", "value_from": "subject.id" }
-    ]
-  }
-}
-```
-
-业务服务内的受信 ORM adapter 根据资源 schema 白名单转换为参数化查询。转换不成功必须拒绝，不得降级为无过滤查询。
-
-### 属性级
-
-`field_rules` 返回字段与 `FieldAccess` 枚举：
-
-```json
-{
-  "field_rules": [
-    { "field": "salary", "access": "deny" },
-    { "field": "phone", "access": "mask", "mask": "phone_partial" },
-    { "field": "display_name", "access": "read_write" }
-  ]
-}
-```
-
-脱敏算法使用预注册枚举，不允许策略携带自定义执行代码。
-
-## 10. 运行时与安全
-
-- 首期 PDP 由权限中心作为集中式 HTTP 服务提供，评估核心保持无 I/O 的 Go 包。
-- PDP 决策 API 只接受经服务凭据或 mTLS 认证的 PEP 调用，不向浏览器公开；调用方身份必须与 `service_resource` 匹配。
-- 快照按 `service_resource` 分区，用 `atomic.Value` 或等价机制原子替换，决策请求不直接读草稿表。
+- PDP 由权限中心作为集中式 HTTP 服务提供，评估核心保持无 I/O 的 Go 包。
+- PDP 决策 API 只接受携带服务凭据的 PEP 调用，不向浏览器公开。
+- 决策请求只读取当前发布版本对应的不可变快照，不读取草稿内容。
 - 决策超时、快照缺失、属性类型错误和未知操作符均失败关闭。
 - 决策日志与业务审计日志分表，设置保留周期和敏感字段脱敏。
 - 对发布、回滚、模拟决策和实时决策分别授权，禁止用策略管理权限隐式获得业务 API 权限。
 
-## 11. Go 模块边界
+## 10. Go 模块边界
 
 ```text
 internal/policy/model       枚举、DSL AST、Decision 契约
@@ -273,34 +227,7 @@ sdk/pdp                     PEP client、middleware、超时与 fail-closed
 
 `internal/policy/eval` 不得依赖 HTTP、PostgreSQL 或具体业务模型，保证可以用表驱动用例、fuzz 和 benchmark 独立验证。
 
-## 12. 分阶段实施
-
-### Phase 0：解耦 UI 权限和 API 权限
-
-- 菜单/按钮授权只承担 UI 可见性语义。
-- 按钮继续维护单一 API path/method 元数据，但 PDP 不读取它，也不据此建立策略关联。
-- 确立 API endpoint 为 PDP 首期资源。
-
-### Phase 1：API 级 PDP
-
-- 建立策略、角色绑定、API target 和版本表。
-- 实现 DSL validator/compiler/evaluator。
-- 实现草稿、模拟、发布、回滚和决策 API。
-- 实现 Go PEP middleware，所有受保护 API 默认拒绝。
-
-### Phase 2：行级
-
-- 增加 resource type schema 和属性白名单。
-- 决策返回中立 row filter AST。
-- 提供受信查询 adapter，先支持单一数据库技术栈。
-
-### Phase 3：属性级
-
-- 增加字段读写与脱敏义务。
-- 对输入 DTO 和输出 DTO 分别执行字段规则。
-- 补充字段冲突合并、schema 演进和脱敏测试。
-
-## 13. 验收底线
+## 11. 验收底线
 
 - 没有匹配 allow 时必须 deny。
 - 任一匹配 deny 不得被 allow 覆盖。
@@ -308,9 +235,8 @@ sdk/pdp                     PEP client、middleware、超时与 fail-closed
 - 不同 `service_resource` 和 `tenant_id` 之间无法关联策略、角色和 target。
 - 相同快照和输入始终产生相同决策。
 - 发布失败不得污染当前运行快照。
-- 行过滤或字段义务无法执行时必须 fail closed。
 
-## 14. 参考原则
+## 12. 参考原则
 
 - [AWS: 使用 OPA 实现 PDP](https://docs.aws.amazon.com/zh_cn/prescriptive-guidance/latest/saas-multitenant-api-access-authorization/opa.html)
 - [AWS: 实施 PEP](https://docs.aws.amazon.com/zh_cn/prescriptive-guidance/latest/saas-multitenant-api-access-authorization/pep.html)

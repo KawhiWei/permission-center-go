@@ -115,6 +115,34 @@
       }
     }
 
+    .layout-header-tool-button.t-button {
+      width: 32px;
+      min-width: 32px;
+      height: 32px;
+      padding: 0;
+      border: 0;
+      color: var(--app-text-secondary);
+      background: transparent;
+
+      .t-icon {
+        display: block;
+        width: 18px;
+        height: 18px;
+        flex: 0 0 18px;
+        color: currentColor;
+      }
+
+      .t-icon path {
+        stroke: currentColor;
+      }
+
+      &:hover,
+      &:focus-visible {
+        color: var(--app-accent);
+        background: var(--app-accent-soft);
+      }
+    }
+
     .t-button {
       color: var(--app-text-secondary);
 

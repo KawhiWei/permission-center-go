@@ -169,18 +169,18 @@ export type ImportSwaggerAPIEndpointsResult = {
 
 export type PolicyEffect = 'allow' | 'deny';
 export type PolicyStatus = 'draft' | 'published' | 'disabled' | 'archived';
-export type PolicyScopeLevel = 'api';
+export type PolicyAuthorizationType = 'api' | 'data';
 export type PolicyValueType = 'string' | 'number' | 'boolean' | 'string_list' | 'number_list';
 export type PolicyComparisonOperator = 'eq' | 'neq' | 'in' | 'not_in' | 'contains' | 'exists';
 
 export type PolicyValueRef = { source: 'subject' | 'resource' | 'request' | 'context' | 'literal'; path?: string; type: PolicyValueType; value?: unknown };
 export type PolicyCondition = { all?: PolicyCondition[]; any?: PolicyCondition[]; not?: PolicyCondition; comparison?: { left: PolicyValueRef; op: PolicyComparisonOperator; right?: PolicyValueRef } };
 export type AuthorizationPolicy = {
-  id: string; serviceResource: string; code: string; name: string; description: string; effect: PolicyEffect; status: PolicyStatus; scopeLevel: PolicyScopeLevel; priority: number; condition: PolicyCondition | null; obligations: { row_filter?: unknown; field_rules?: unknown[] }; currentVersion: number; roleIds: string[]; endpointIds: string[]; updatedAt?: string;
+  id: string; serviceResource: string; code: string; name: string; description: string; effect: PolicyEffect; status: PolicyStatus; authorizationType: PolicyAuthorizationType; priority: number; condition: PolicyCondition | null; currentVersion: number; roleIds: string[]; endpointIds: string[]; updatedAt?: string;
 };
-export type PolicyRequest = { service_resource?: string; code: string; name: string; description: string; effect: PolicyEffect; scope_level: PolicyScopeLevel; priority: number; condition?: PolicyCondition | null; obligations?: { row_filter?: unknown; field_rules?: unknown[] }; role_ids: string[]; endpoint_ids: string[] };
-export type PDPDecision = { decision: 'allow' | 'deny'; reasonCode: string; matchedPolicyIds: string[]; snapshotVersion: number; obligations: { row_filter?: unknown; field_rules?: unknown[] } };
-export type PDPDecisionRequest = { request_id?: string; service_resource: string; tenant_id: string; subject: { id: string; attributes?: Record<string, unknown> }; action: { kind: 'http'; method: string }; resource: { kind: 'api_endpoint'; endpoint_id: string; attributes?: Record<string, unknown> }; context?: Record<string, unknown> };
+export type PolicyRequest = { service_resource?: string; code: string; name: string; description: string; effect: PolicyEffect; authorization_type: PolicyAuthorizationType; priority: number; condition?: PolicyCondition | null; role_ids: string[]; endpoint_ids: string[] };
+export type PDPDecision = { decision: 'allow' | 'deny'; reasonCode: string; matchedPolicyIds: string[]; snapshotVersion: number };
+export type PDPDecisionRequest = { request_id?: string; authorization_type: 'api' | 'data'; service_resource: string; tenant_id: string; subject: { id: string; attributes?: Record<string, unknown> }; action: { kind: 'http'; method: string }; resource: { kind: 'api_endpoint'; endpoint_id: string; attributes?: Record<string, unknown> }; context?: Record<string, unknown> };
 
 type RawRecord = Record<string, unknown>;
 
@@ -325,18 +325,15 @@ const rawStringArray = (record: RawRecord, ...keys: string[]): string[] => {
   for (const key of keys) { const value = record[key]; if (Array.isArray(value)) return value.filter((item): item is string => typeof item === 'string'); }
   return [];
 };
-const rawObject = (record: RawRecord, ...keys: string[]): Record<string, unknown> => {
-  for (const key of keys) { const value = record[key]; if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>; }
-  return {};
-};
 const normalizePolicy = (value: unknown): AuthorizationPolicy => {
   const record = (value && typeof value === 'object' ? value : {}) as RawRecord;
   const effect = rawString(record, 'effect', 'Effect') === 'deny' ? 'deny' : 'allow';
   const statusValue = rawString(record, 'status', 'Status');
   const status: PolicyStatus = statusValue === 'published' || statusValue === 'disabled' || statusValue === 'archived' ? statusValue : 'draft';
-  return { id: rawString(record, 'id', 'ID'), serviceResource: rawString(record, 'service_resource', 'serviceResource', 'ServiceResource'), code: rawString(record, 'code', 'Code'), name: rawString(record, 'name', 'Name'), description: rawString(record, 'description', 'Description'), effect, status, scopeLevel: 'api', priority: rawNumber(record, 'priority', 'Priority'), condition: (record.condition && typeof record.condition === 'object' ? record.condition as PolicyCondition : null), obligations: rawObject(record, 'obligations', 'Obligations'), currentVersion: rawNumber(record, 'current_version', 'currentVersion', 'CurrentVersion'), roleIds: rawStringArray(record, 'role_ids', 'roleIds', 'RoleIDs'), endpointIds: rawStringArray(record, 'endpoint_ids', 'endpointIds', 'EndpointIDs'), updatedAt: rawDate(record, 'updated_at', 'updatedAt', 'UpdatedAt') };
+  const authorizationType = rawString(record, 'authorization_type', 'authorizationType', 'AuthorizationType') as PolicyAuthorizationType;
+  return { id: rawString(record, 'id', 'ID'), serviceResource: rawString(record, 'service_resource', 'serviceResource', 'ServiceResource'), code: rawString(record, 'code', 'Code'), name: rawString(record, 'name', 'Name'), description: rawString(record, 'description', 'Description'), effect, status, authorizationType, priority: rawNumber(record, 'priority', 'Priority'), condition: (record.condition && typeof record.condition === 'object' ? record.condition as PolicyCondition : null), currentVersion: rawNumber(record, 'current_version', 'currentVersion', 'CurrentVersion'), roleIds: rawStringArray(record, 'role_ids', 'roleIds', 'RoleIDs'), endpointIds: rawStringArray(record, 'endpoint_ids', 'endpointIds', 'EndpointIDs'), updatedAt: rawDate(record, 'updated_at', 'updatedAt', 'UpdatedAt') };
 };
-const normalizePDPDecision = (value: unknown): PDPDecision => { const record = (value && typeof value === 'object' ? value : {}) as RawRecord; return { decision: rawString(record, 'decision', 'Decision') === 'allow' ? 'allow' : 'deny', reasonCode: rawString(record, 'reason_code', 'reasonCode', 'ReasonCode'), matchedPolicyIds: rawStringArray(record, 'matched_policy_ids', 'matchedPolicyIds', 'MatchedPolicyIDs'), snapshotVersion: rawNumber(record, 'snapshot_version', 'snapshotVersion', 'SnapshotVersion'), obligations: rawObject(record, 'obligations', 'Obligations') }; };
+const normalizePDPDecision = (value: unknown): PDPDecision => { const record = (value && typeof value === 'object' ? value : {}) as RawRecord; return { decision: rawString(record, 'decision', 'Decision') === 'allow' ? 'allow' : 'deny', reasonCode: rawString(record, 'reason_code', 'reasonCode', 'ReasonCode'), matchedPolicyIds: rawStringArray(record, 'matched_policy_ids', 'matchedPolicyIds', 'MatchedPolicyIDs'), snapshotVersion: rawNumber(record, 'snapshot_version', 'snapshotVersion', 'SnapshotVersion') }; };
 
 const readItems = (value: unknown): unknown[] => {
   if (Array.isArray(value)) {

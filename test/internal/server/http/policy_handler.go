@@ -18,21 +18,20 @@ func (h *Handler) WithAuthorizationPolicyService(service *biz.AuthorizationPolic
 }
 
 type policyRequest struct {
-	ServiceResource string           `json:"service_resource"`
-	Code            string           `json:"code"`
-	Name            string           `json:"name"`
-	Description     string           `json:"description"`
-	Effect          model.Effect     `json:"effect"`
-	ScopeLevel      model.ScopeLevel `json:"scope_level"`
-	Priority        int              `json:"priority"`
-	Condition       *model.Condition `json:"condition"`
-	Obligations     model.Obligation `json:"obligations"`
-	RoleIDs         []string         `json:"role_ids"`
-	EndpointIDs     []uuid.UUID      `json:"endpoint_ids"`
+	ServiceResource   string                  `json:"service_resource"`
+	Code              string                  `json:"code"`
+	Name              string                  `json:"name"`
+	Description       string                  `json:"description"`
+	Effect            model.Effect            `json:"effect"`
+	AuthorizationType model.AuthorizationType `json:"authorization_type"`
+	Priority          int                     `json:"priority"`
+	Condition         *model.Condition        `json:"condition"`
+	RoleIDs           []string                `json:"role_ids"`
+	EndpointIDs       []uuid.UUID             `json:"endpoint_ids"`
 }
 
 func (r policyRequest) value(id uuid.UUID) *biz.AuthorizationPolicy {
-	return &biz.AuthorizationPolicy{ID: id, ServiceResource: r.ServiceResource, Code: r.Code, Name: r.Name, Description: r.Description, Effect: r.Effect, ScopeLevel: r.ScopeLevel, Priority: r.Priority, Condition: r.Condition, Obligations: r.Obligations, RoleIDs: r.RoleIDs, EndpointIDs: r.EndpointIDs}
+	return &biz.AuthorizationPolicy{ID: id, ServiceResource: r.ServiceResource, Code: r.Code, Name: r.Name, Description: r.Description, Effect: r.Effect, AuthorizationType: r.AuthorizationType, Priority: r.Priority, Condition: r.Condition, RoleIDs: r.RoleIDs, EndpointIDs: r.EndpointIDs}
 }
 func (h *Handler) CreateAuthorizationPolicy(w http.ResponseWriter, r *http.Request) {
 	if h.policies == nil {
@@ -162,12 +161,12 @@ func (h *Handler) DecideAuthorizationPolicy(w http.ResponseWriter, r *http.Reque
 		http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 		return
 	}
-	h.decideAuthorizationPolicy(w, r)
+	h.decideAuthorizationPolicy(w, r, true)
 }
 func (h *Handler) SimulateAuthorizationPolicy(w http.ResponseWriter, r *http.Request) {
-	h.decideAuthorizationPolicy(w, r)
+	h.decideAuthorizationPolicy(w, r, false)
 }
-func (h *Handler) decideAuthorizationPolicy(w http.ResponseWriter, r *http.Request) {
+func (h *Handler) decideAuthorizationPolicy(w http.ResponseWriter, r *http.Request, rawResponse bool) {
 	if h.policies == nil {
 		writeError(w, biz.ErrNotFound)
 		return
@@ -180,6 +179,10 @@ func (h *Handler) decideAuthorizationPolicy(w http.ResponseWriter, r *http.Reque
 	result, err := h.policies.Decide(r.Context(), request)
 	if err != nil {
 		writeError(w, err)
+		return
+	}
+	if rawResponse {
+		writeRawJSON(w, http.StatusOK, result)
 		return
 	}
 	writeJSON(w, http.StatusOK, result)

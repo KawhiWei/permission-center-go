@@ -1,8 +1,9 @@
-// Package model defines the serializable, storage-neutral PDP policy contract.
+// Package model 定义与数据库实现无关、可序列化的 PDP 策略契约。
 package model
 
 import (
 	"encoding/json"
+
 	"github.com/google/uuid"
 )
 
@@ -28,22 +29,23 @@ func (v Status) Valid() bool {
 	return v == StatusDraft || v == StatusPublished || v == StatusDisabled || v == StatusArchived
 }
 
-type ScopeLevel string
-
-const (
-	ScopeAPI   ScopeLevel = "api"
-	ScopeRow   ScopeLevel = "row"
-	ScopeField ScopeLevel = "field"
-)
-
-func (v ScopeLevel) Valid() bool { return v == ScopeAPI || v == ScopeRow || v == ScopeField }
-
 type Decision string
 
 const (
 	DecisionAllow Decision = "allow"
 	DecisionDeny  Decision = "deny"
 )
+
+type AuthorizationType string
+
+const (
+	AuthorizationTypeAPI  AuthorizationType = "api"
+	AuthorizationTypeData AuthorizationType = "data"
+)
+
+func (v AuthorizationType) Valid() bool {
+	return v == AuthorizationTypeAPI || v == AuthorizationTypeData
+}
 
 type ReasonCode string
 
@@ -60,11 +62,10 @@ const (
 type TargetKind string
 
 const (
-	TargetAPIEndpoint  TargetKind = "api_endpoint"
-	TargetResourceType TargetKind = "resource_type"
+	TargetAPIEndpoint TargetKind = "api_endpoint"
 )
 
-func (v TargetKind) Valid() bool { return v == TargetAPIEndpoint || v == TargetResourceType }
+func (v TargetKind) Valid() bool { return v == TargetAPIEndpoint }
 
 type ActionKind string
 
@@ -127,7 +128,7 @@ func (v ComparisonOperator) Valid() bool {
 	return false
 }
 
-// ValueRef reads a typed value from decision input, or carries a literal.
+// ValueRef 表示条件表达式中的一个值：可以读取可信决策输入，也可以直接携带字面量。
 type ValueRef struct {
 	Source ValueSource `json:"source"`
 	Path   string      `json:"path,omitempty"`
@@ -140,7 +141,7 @@ type Comparison struct {
 	Right *ValueRef          `json:"right,omitempty"`
 }
 
-// Condition is an AST node. Exactly one of All, Any, Not or Comparison must be set.
+// Condition 是条件语法树节点；All、Any、Not、Comparison 必须且只能设置一个。
 type Condition struct {
 	All        []Condition `json:"all,omitempty"`
 	Any        []Condition `json:"any,omitempty"`
@@ -148,8 +149,7 @@ type Condition struct {
 	Comparison *Comparison `json:"comparison,omitempty"`
 }
 
-// UnmarshalJSON accepts both the canonical {"comparison": {...}} shape and
-// the compact leaf shape from the PDP design document: {"left": ..., "op": ...}.
+// UnmarshalJSON 同时接受标准 comparison 结构和设计文档中的紧凑叶子结构。
 func (c *Condition) UnmarshalJSON(data []byte) error {
 	var raw struct {
 		All        []Condition        `json:"all"`
@@ -170,57 +170,33 @@ func (c *Condition) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-type Obligation struct {
-	RowFilter  any         `json:"row_filter,omitempty"`
-	FieldRules []FieldRule `json:"field_rules,omitempty"`
-}
-type FieldRule struct {
-	Field  string      `json:"field"`
-	Access FieldAccess `json:"access"`
-	Mask   string      `json:"mask,omitempty"`
-}
-type FieldAccess string
-
-const (
-	FieldRead      FieldAccess = "read"
-	FieldWrite     FieldAccess = "write"
-	FieldReadWrite FieldAccess = "read_write"
-	FieldMask      FieldAccess = "mask"
-	FieldDeny      FieldAccess = "deny"
-)
-
-func (v FieldAccess) Valid() bool {
-	switch v {
-	case FieldRead, FieldWrite, FieldReadWrite, FieldMask, FieldDeny:
-		return true
-	}
-	return false
-}
-
-// Snapshot is immutable input to the evaluator. It intentionally contains no database model.
+// Snapshot 是发布后不可变的策略快照，也是评估器唯一接收的策略格式。
 type Snapshot struct {
-	PolicyID        uuid.UUID   `json:"policy_id"`
-	Version         int         `json:"version"`
-	ServiceResource string      `json:"service_resource"`
-	Effect          Effect      `json:"effect"`
-	ScopeLevel      ScopeLevel  `json:"scope_level"`
-	Priority        int         `json:"priority"`
-	RoleIDs         []string    `json:"role_ids"`
-	EndpointIDs     []uuid.UUID `json:"endpoint_ids"`
-	Condition       *Condition  `json:"condition,omitempty"`
-	Obligations     Obligation  `json:"obligations"`
+	PolicyID          uuid.UUID         `json:"policy_id"`
+	Version           int               `json:"version"`
+	AuthorizationType AuthorizationType `json:"authorization_type"`
+	ServiceResource   string            `json:"service_resource"`
+	Effect            Effect            `json:"effect"`
+	Priority          int               `json:"priority"`
+	RoleIDs           []string          `json:"role_ids"`
+	EndpointIDs       []uuid.UUID       `json:"endpoint_ids"`
+	Condition         *Condition        `json:"condition,omitempty"`
 }
+
+// Input 是业务服务提交给 PDP 的可信事实。attributes 和 context 只有被条件引用时才需要提供。
 type Input struct {
-	RequestID       string         `json:"request_id"`
-	ServiceResource string         `json:"service_resource"`
-	TenantID        string         `json:"tenant_id"`
-	Subject         Subject        `json:"subject"`
-	Action          Action         `json:"action"`
-	Resource        Resource       `json:"resource"`
-	Context         map[string]any `json:"context,omitempty"`
+	RequestID         string            `json:"request_id"`
+	AuthorizationType AuthorizationType `json:"authorization_type"`
+	ServiceResource   string            `json:"service_resource"`
+	TenantID          string            `json:"tenant_id"`
+	Subject           Subject           `json:"subject"`
+	Action            Action            `json:"action"`
+	Resource          Resource          `json:"resource"`
+	Context           map[string]any    `json:"context,omitempty"`
 }
 type Subject struct {
-	ID         string         `json:"id"`
+	ID string `json:"id"`
+	// RoleIDs 由鉴权中心根据已验证的 subject 查询，禁止客户端直接传入。
 	RoleIDs    []string       `json:"-"`
 	Attributes map[string]any `json:"attributes,omitempty"`
 }
@@ -238,5 +214,4 @@ type Result struct {
 	ReasonCode       ReasonCode  `json:"reason_code"`
 	MatchedPolicyIDs []uuid.UUID `json:"matched_policy_ids"`
 	SnapshotVersion  int         `json:"snapshot_version"`
-	Obligations      Obligation  `json:"obligations"`
 }

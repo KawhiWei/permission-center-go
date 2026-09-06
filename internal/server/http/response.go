@@ -35,8 +35,6 @@ func writeError(w http.ResponseWriter, err error) {
 		status = http.StatusNotFound
 	case errors.Is(err, biz.ErrAlreadyExists), errors.Is(err, biz.ErrConflict):
 		status = http.StatusConflict
-	case errors.Is(err, biz.ErrNotImplemented):
-		status = http.StatusNotImplemented
 	}
 	writeRawJSON(w, status, map[string]any{
 		"success":      false,
@@ -57,8 +55,6 @@ func apiErrorCode(err error) string {
 		return "ALREADY_EXISTS"
 	case errors.Is(err, biz.ErrConflict):
 		return "CONFLICT"
-	case errors.Is(err, biz.ErrNotImplemented):
-		return "NOT_IMPLEMENTED"
 	default:
 		return "INTERNAL_ERROR"
 	}

@@ -18,7 +18,7 @@ func NewAuthorizationPolicyRepository(pool *pgxpool.Pool) *AuthorizationPolicyRe
 	return &AuthorizationPolicyRepository{pool: pool}
 }
 
-const policyColumns = `id, service_resource, code, name, description, effect, status, scope_level, priority, condition, obligations, current_version, created_by_id, created_by_name, created_at, updated_by_id, updated_by_name, updated_at, is_deleted`
+const policyColumns = `id, service_resource, code, name, description, effect, status, authorization_type, priority, condition, current_version, created_by_id, created_by_name, created_at, updated_by_id, updated_by_name, updated_at, is_deleted`
 
 func (r *AuthorizationPolicyRepository) Create(ctx context.Context, value *biz.AuthorizationPolicy) (*biz.AuthorizationPolicy, error) {
 	if value.ID == uuid.Nil {
@@ -30,13 +30,13 @@ func (r *AuthorizationPolicyRepository) Update(ctx context.Context, value *biz.A
 	return r.save(ctx, value, false)
 }
 func (r *AuthorizationPolicyRepository) save(ctx context.Context, value *biz.AuthorizationPolicy, create bool) (*biz.AuthorizationPolicy, error) {
-	condition, err := marshalJSON(value.Condition)
-	if err != nil {
-		return nil, err
-	}
-	obligations, err := marshalJSON(value.Obligations)
-	if err != nil {
-		return nil, err
+	var condition []byte
+	var err error
+	if value.Condition != nil {
+		condition, err = marshalJSON(value.Condition)
+		if err != nil {
+			return nil, err
+		}
 	}
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
@@ -46,10 +46,10 @@ func (r *AuthorizationPolicyRepository) save(ctx context.Context, value *biz.Aut
 	actor := biz.AuditActorFromContext(ctx)
 	var stored *biz.AuthorizationPolicy
 	if create {
-		row := tx.QueryRow(ctx, `INSERT INTO authorization_policies (`+policyColumns+`) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,NOW(),$13,$14,NOW(),FALSE) RETURNING `+policyColumns, value.ID, value.ServiceResource, value.Code, value.Name, value.Description, value.Effect, value.Status, value.ScopeLevel, value.Priority, condition, obligations, value.CurrentVersion, actor.ID, actor.Name)
+		row := tx.QueryRow(ctx, `INSERT INTO authorization_policies (`+policyColumns+`) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,NOW(),$12,$13,NOW(),FALSE) RETURNING `+policyColumns, value.ID, value.ServiceResource, value.Code, value.Name, value.Description, value.Effect, value.Status, value.AuthorizationType, value.Priority, condition, value.CurrentVersion, actor.ID, actor.Name)
 		stored, err = scanPolicy(row)
 	} else {
-		row := tx.QueryRow(ctx, `UPDATE authorization_policies SET code=$2,name=$3,description=$4,effect=$5,status=$6,scope_level=$7,priority=$8,condition=$9,obligations=$10,current_version=$11,updated_by_id=$12,updated_by_name=$13,updated_at=NOW() WHERE id=$1 AND is_deleted=FALSE RETURNING `+policyColumns, value.ID, value.Code, value.Name, value.Description, value.Effect, value.Status, value.ScopeLevel, value.Priority, condition, obligations, value.CurrentVersion, actor.ID, actor.Name)
+		row := tx.QueryRow(ctx, `UPDATE authorization_policies SET code=$2,name=$3,description=$4,effect=$5,status=$6,authorization_type=$7,priority=$8,condition=$9,current_version=$10,updated_by_id=$11,updated_by_name=$12,updated_at=NOW() WHERE id=$1 AND is_deleted=FALSE RETURNING `+policyColumns, value.ID, value.Code, value.Name, value.Description, value.Effect, value.Status, value.AuthorizationType, value.Priority, condition, value.CurrentVersion, actor.ID, actor.Name)
 		stored, err = scanPolicy(row)
 	}
 	if err != nil {
@@ -185,6 +185,9 @@ func (r *AuthorizationPolicyRepository) ListPublishedByEndpoint(ctx context.Cont
 	return result, mapDBError(rows.Err())
 }
 func (r *AuthorizationPolicyRepository) SaveDecisionLog(ctx context.Context, value biz.DecisionLog) error {
+	if value.MatchedPolicyIDs == nil {
+		value.MatchedPolicyIDs = []uuid.UUID{}
+	}
 	_, err := r.pool.Exec(ctx, `INSERT INTO authorization_decision_logs (decision_id,request_id,service_resource,tenant_id,subject_id,endpoint_id,decision,reason_code,matched_policy_ids,policy_snapshot_version,latency_ms,occurred_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`, value.DecisionID, value.RequestID, value.ServiceResource, value.TenantID, value.SubjectID, value.EndpointID, value.Decision, value.ReasonCode, value.MatchedPolicyIDs, value.SnapshotVersion, value.LatencyMS, value.OccurredAt)
 	return mapDBError(err)
 }
@@ -206,19 +209,14 @@ func (r *AuthorizationPolicyRepository) ListDecisionLogs(ctx context.Context, sc
 }
 func scanPolicy(row interface{ Scan(...any) error }) (*biz.AuthorizationPolicy, error) {
 	var value biz.AuthorizationPolicy
-	var condition, obligations []byte
-	err := row.Scan(&value.ID, &value.ServiceResource, &value.Code, &value.Name, &value.Description, &value.Effect, &value.Status, &value.ScopeLevel, &value.Priority, &condition, &obligations, &value.CurrentVersion, &value.CreatedByID, &value.CreatedByName, &value.CreatedAt, &value.UpdatedByID, &value.UpdatedByName, &value.UpdatedAt, &value.IsDeleted)
+	var condition []byte
+	err := row.Scan(&value.ID, &value.ServiceResource, &value.Code, &value.Name, &value.Description, &value.Effect, &value.Status, &value.AuthorizationType, &value.Priority, &condition, &value.CurrentVersion, &value.CreatedByID, &value.CreatedByName, &value.CreatedAt, &value.UpdatedByID, &value.UpdatedByName, &value.UpdatedAt, &value.IsDeleted)
 	if err != nil {
 		return nil, err
 	}
 	if len(condition) > 0 && string(condition) != "null" {
 		value.Condition = &model.Condition{}
 		if err = json.Unmarshal(condition, value.Condition); err != nil {
-			return nil, err
-		}
-	}
-	if len(obligations) > 0 {
-		if err = json.Unmarshal(obligations, &value.Obligations); err != nil {
 			return nil, err
 		}
 	}

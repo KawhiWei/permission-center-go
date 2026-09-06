@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Button, Input, Space, Tooltip } from 'tdesign-react';
-import { FullscreenExitIcon, FullscreenIcon, MoonIcon, SearchIcon, SunnyIcon } from 'tdesign-icons-react';
+import { Fullscreen1Icon, FullscreenExit1Icon, MoonIcon, SearchIcon, SunnyIcon } from 'tdesign-icons-react';
 import {
   SERVICE_RESOURCE_CHANGE_EVENT,
   SERVICE_RESOURCE_STORAGE_KEY,
@@ -51,9 +51,11 @@ const PublicHeader = ({ theme, onChangeTheme }: PublicHeaderProps) => {
     const handleToggleFullscreen = async () => {
         if (document.fullscreenElement) {
             await document.exitFullscreen();
+            setIsFullscreen(false);
             return;
         }
         await document.documentElement.requestFullscreen();
+        setIsFullscreen(true);
     };
 
     const handleSwitchServiceResource = () => {
@@ -95,9 +97,13 @@ const PublicHeader = ({ theme, onChangeTheme }: PublicHeaderProps) => {
                   content={`点击切换为${theme === 'light' ? '暗黑' : '亮色'}模式`}
                 >
                   <Button
+                    className="layout-header-tool-button"
+                    variant="text"
                     size="small"
                     shape="circle"
-                    icon={theme === 'light' ? <MoonIcon /> : <SunnyIcon />}
+                    type="button"
+                    aria-label={theme === 'light' ? '切换到暗色主题' : '切换到浅色主题'}
+                    icon={theme === 'light' ? <MoonIcon size="18px" /> : <SunnyIcon size="18px" />}
                     onClick={onChangeTheme}
                   />
                 </Tooltip>
@@ -107,9 +113,13 @@ const PublicHeader = ({ theme, onChangeTheme }: PublicHeaderProps) => {
                   content={isFullscreen ? '退出全屏' : '全屏显示'}
                 >
                   <Button
+                    className="layout-header-tool-button"
+                    variant="text"
                     size="small"
                     shape="circle"
-                    icon={isFullscreen ? <FullscreenExitIcon /> : <FullscreenIcon />}
+                    type="button"
+                    aria-label={isFullscreen ? '退出全屏' : '进入全屏'}
+                    icon={isFullscreen ? <FullscreenExit1Icon size="18px" /> : <Fullscreen1Icon size="18px" />}
                     onClick={() => {
                       void handleToggleFullscreen();
                     }}

@@ -1,4 +1,4 @@
-// Package validate validates the restricted structural policy DSL.
+// Package validate 校验受限的结构化策略 DSL，拒绝任意脚本和畸形条件树。
 package validate
 
 import (
@@ -10,6 +10,7 @@ import (
 const maxDepth = 8
 const maxNodes = 64
 
+// Condition 限制条件树深度、节点数、操作符和值类型，防止无效或过度复杂的策略进入快照。
 func Condition(value *model.Condition) error {
 	if value == nil {
 		return nil

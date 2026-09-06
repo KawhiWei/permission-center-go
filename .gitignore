@@ -8,6 +8,10 @@
 *.so
 *.dylib
 
+# .NET build output
+**/bin/
+**/obj/
+
 # Test binary, built with `go test -c`
 *.test
 

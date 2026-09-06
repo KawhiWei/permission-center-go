@@ -1,4 +1,4 @@
-// Package pdp provides the PEP-facing client contract for the permission center PDP.
+// Package pdp 提供业务服务（PEP）调用权限中心 PDP 的客户端契约。
 package pdp
 
 import (
@@ -20,13 +20,14 @@ const (
 )
 
 type Input struct {
-	RequestID       string         `json:"request_id,omitempty"`
-	ServiceResource string         `json:"service_resource"`
-	TenantID        string         `json:"tenant_id"`
-	Subject         Subject        `json:"subject"`
-	Action          Action         `json:"action"`
-	Resource        Resource       `json:"resource"`
-	Context         map[string]any `json:"context,omitempty"`
+	RequestID         string         `json:"request_id,omitempty"`
+	AuthorizationType string         `json:"authorization_type"`
+	ServiceResource   string         `json:"service_resource"`
+	TenantID          string         `json:"tenant_id"`
+	Subject           Subject        `json:"subject"`
+	Action            Action         `json:"action"`
+	Resource          Resource       `json:"resource"`
+	Context           map[string]any `json:"context,omitempty"`
 }
 
 type Subject struct {
@@ -46,11 +47,10 @@ type Resource struct {
 }
 
 type Result struct {
-	Decision         Decision        `json:"decision"`
-	ReasonCode       string          `json:"reason_code"`
-	MatchedPolicyIDs []string        `json:"matched_policy_ids"`
-	SnapshotVersion  int             `json:"snapshot_version"`
-	Obligations      json.RawMessage `json:"obligations"`
+	Decision         Decision `json:"decision"`
+	ReasonCode       string   `json:"reason_code"`
+	MatchedPolicyIDs []string `json:"matched_policy_ids"`
+	SnapshotVersion  int      `json:"snapshot_version"`
 }
 
 type Client struct {
@@ -71,7 +71,8 @@ func NewClient(baseURL, credential string, httpClient *http.Client) (*Client, er
 }
 
 func (c *Client) Decide(ctx context.Context, input Input) (Result, error) {
-	if strings.TrimSpace(input.ServiceResource) == "" || strings.TrimSpace(input.TenantID) == "" || strings.TrimSpace(input.Subject.ID) == "" || input.Action.Kind != "http" || input.Resource.Kind != "api_endpoint" || strings.TrimSpace(input.Resource.EndpointID) == "" {
+	// 鉴权类型必须由业务路由明确指定，禁止用缺省值掩盖接入错误。
+	if input.AuthorizationType != "api" && input.AuthorizationType != "data" || strings.TrimSpace(input.ServiceResource) == "" || strings.TrimSpace(input.TenantID) == "" || strings.TrimSpace(input.Subject.ID) == "" || input.Action.Kind != "http" || input.Resource.Kind != "api_endpoint" || strings.TrimSpace(input.Resource.EndpointID) == "" {
 		return Result{}, fmt.Errorf("invalid PDP decision input")
 	}
 	body, err := json.Marshal(input)

@@ -89,10 +89,9 @@ type PolicyRecord = {
   description: string;
   effect: 'allow' | 'deny';
   status: 'draft' | 'published' | 'disabled' | 'archived';
-  scope_level: 'api';
+  authorization_type: 'api' | 'data';
   priority: number;
   condition: Record<string, unknown> | null;
-  obligations: Record<string, unknown>;
   current_version: number;
   role_ids: string[];
   endpoint_ids: string[];
@@ -575,7 +574,7 @@ const installAPIMocks = async (page: Page): Promise<PermissionMockState> => {
     const serviceResource = url.searchParams.get('service_resource') || FIRST_SERVICE_RESOURCE.key;
     if (request.method() === 'POST' && path === '/api/v1/authorization/policies/simulate') {
       const payload = request.postDataJSON() as Record<string, unknown>;
-      await fulfillJSON(route, jsonResult({ decision: 'allow', reason_code: 'allowed_by_policy', matched_policy_ids: ['policy-created-1'], snapshot_version: 1, obligations: {}, request_id: payload.request_id || '' }));
+      await fulfillJSON(route, jsonResult({ decision: 'allow', reason_code: 'allowed_by_policy', matched_policy_ids: ['policy-created-1'], snapshot_version: 1, request_id: payload.request_id || '' }));
       return;
     }
     if (request.method() === 'GET' && path === '/api/v1/authorization/policies') {
@@ -585,7 +584,7 @@ const installAPIMocks = async (page: Page): Promise<PermissionMockState> => {
     if (request.method() === 'POST' && path === '/api/v1/authorization/policies') {
       const payload = request.postDataJSON() as Record<string, unknown>;
       const resourceName = String(payload.service_resource || serviceResource);
-      const policy: PolicyRecord = { id: `policy-created-${(state.policiesByServiceResource[resourceName] || []).length + 1}`, service_resource: resourceName, code: String(payload.code || ''), name: String(payload.name || ''), description: String(payload.description || ''), effect: payload.effect === 'deny' ? 'deny' : 'allow', status: 'draft', scope_level: 'api', priority: typeof payload.priority === 'number' ? payload.priority : 0, condition: payload.condition && typeof payload.condition === 'object' ? payload.condition as Record<string, unknown> : null, obligations: {}, current_version: 0, role_ids: Array.isArray(payload.role_ids) ? payload.role_ids.map(String) : [], endpoint_ids: Array.isArray(payload.endpoint_ids) ? payload.endpoint_ids.map(String) : [] };
+      const policy: PolicyRecord = { id: `policy-created-${(state.policiesByServiceResource[resourceName] || []).length + 1}`, service_resource: resourceName, code: String(payload.code || ''), name: String(payload.name || ''), description: String(payload.description || ''), effect: payload.effect === 'deny' ? 'deny' : 'allow', status: 'draft', authorization_type: payload.authorization_type === 'data' ? 'data' : 'api', priority: typeof payload.priority === 'number' ? payload.priority : 0, condition: payload.condition && typeof payload.condition === 'object' ? payload.condition as Record<string, unknown> : null, current_version: 0, role_ids: Array.isArray(payload.role_ids) ? payload.role_ids.map(String) : [], endpoint_ids: Array.isArray(payload.endpoint_ids) ? payload.endpoint_ids.map(String) : [] };
       state.policiesByServiceResource[resourceName] = [...(state.policiesByServiceResource[resourceName] || []), policy];
       await fulfillJSON(route, jsonResult(policy), 201);
       return;
@@ -611,9 +610,9 @@ const installAPIMocks = async (page: Page): Promise<PermissionMockState> => {
           name: String(payload.name ?? policy.name),
           description: String(payload.description ?? policy.description),
           effect: payload.effect === 'deny' ? 'deny' : 'allow',
+          authorization_type: payload.authorization_type === 'data' ? 'data' : 'api',
           priority: typeof payload.priority === 'number' ? payload.priority : policy.priority,
           condition: payload.condition && typeof payload.condition === 'object' ? payload.condition as Record<string, unknown> : null,
-          obligations: payload.obligations && typeof payload.obligations === 'object' ? payload.obligations as Record<string, unknown> : {},
           role_ids: Array.isArray(payload.role_ids) ? payload.role_ids.map(String) : policy.role_ids,
           endpoint_ids: Array.isArray(payload.endpoint_ids) ? payload.endpoint_ids.map(String) : policy.endpoint_ids,
         };
@@ -714,6 +713,49 @@ const seedServiceResource = async (page: Page, serviceResource = FIRST_SERVICE_R
 };
 
 test.describe('权限中心关键操作流程', () => {
+  test('Header 主题和全屏图标在明暗状态下正确显示', async ({ page }) => {
+    await installAPIMocks(page);
+    await seedServiceResource(page);
+    await page.addInitScript(() => {
+      let fullscreen = false;
+      Object.defineProperty(Document.prototype, 'fullscreenElement', {
+        configurable: true,
+        get: () => fullscreen ? document.documentElement : null,
+      });
+      Object.defineProperty(Document.prototype, 'fullscreenEnabled', { configurable: true, value: true });
+      Object.defineProperty(HTMLElement.prototype, 'requestFullscreen', {
+        configurable: true,
+        value: async () => {
+          fullscreen = true;
+          document.dispatchEvent(new Event('fullscreenchange'));
+        },
+      });
+      Object.defineProperty(Document.prototype, 'exitFullscreen', {
+        configurable: true,
+        value: async () => {
+          fullscreen = false;
+          document.dispatchEvent(new Event('fullscreenchange'));
+        },
+      });
+      window.localStorage.setItem('theme-mode', 'light');
+    });
+    await page.goto('/dashboard');
+
+    const themeButton = page.getByRole('button', { name: '切换到暗色主题' });
+    const fullscreenButton = page.getByRole('button', { name: '进入全屏' });
+    await expect(themeButton.locator('.t-icon-moon')).toBeVisible();
+    await expect(fullscreenButton.locator('.t-icon-fullscreen-1')).toBeVisible();
+    await expect(themeButton).toHaveCSS('color', 'rgb(83, 98, 115)');
+    await expect(fullscreenButton).toHaveCSS('color', 'rgb(83, 98, 115)');
+
+    await themeButton.click();
+    await expect(page.locator('html')).toHaveAttribute('theme-mode', 'dark');
+    await expect(page.getByRole('button', { name: '切换到浅色主题' }).locator('.t-icon-sunny')).toBeVisible();
+
+    await fullscreenButton.click();
+    await expect(page.getByRole('button', { name: '退出全屏' }).locator('.t-icon-fullscreen-exit-1')).toBeVisible();
+  });
+
   test('未选择服务资源时直接访问角色管理会重定向到服务资源选择页', async ({ page }) => {
     await installAPIMocks(page);
     await page.goto('/roles');
@@ -1333,7 +1375,7 @@ test.describe('权限中心关键操作流程', () => {
 
     await page.getByPlaceholder('NexusAuth subject').fill('e2e-user');
     await page.getByPlaceholder('tenant_id').fill('tenant-a');
-    await page.locator('.permission-policy-simulator .t-select').click();
+    await page.locator('.permission-policy-simulator .t-select').nth(1).click();
     await page.locator('.t-select-option').filter({ hasText: 'GET /v1/posts' }).last().click();
     await page.getByRole('button', { name: '执行决策', exact: true }).click();
     await expect(page.getByText('ALLOW', { exact: true })).toBeVisible();
@@ -1349,7 +1391,7 @@ test.describe('权限中心关键操作流程', () => {
       description: '仅限工程部门',
       effect: 'deny',
       status: 'draft',
-      scope_level: 'api',
+      authorization_type: 'data',
       priority: 42,
       condition: {
         comparison: {
@@ -1358,7 +1400,6 @@ test.describe('权限中心关键操作流程', () => {
           right: { source: 'literal', type: 'string', value: 'engineering' },
         },
       },
-      obligations: {},
       current_version: 0,
       role_ids: ['role-reviewer'],
       endpoint_ids: ['endpoint-post-import'],
@@ -1367,11 +1408,13 @@ test.describe('权限中心关键操作流程', () => {
     await page.goto('/policies');
 
     const row = page.getByRole('row').filter({ hasText: 'department-read' });
+    await expect(row).toContainText('数据级');
     await row.getByRole('button', { name: '编辑', exact: true }).click();
     const drawer = page.locator('.t-drawer').filter({ hasText: '编辑策略草稿' });
     await expect(drawer.getByPlaceholder('例如 post-read')).toHaveValue('department-read');
     await expect(drawer.getByPlaceholder('例如 阅读帖子')).toHaveValue('部门读取策略');
     await expect(drawer.getByRole('spinbutton')).toHaveValue('42');
+    await expect(drawer.locator('.t-form-item__authorizationType').getByRole('textbox')).toHaveValue('业务数据级');
     await expect(drawer.getByText('内容审核 (content-reviewer)', { exact: true })).toBeVisible();
     await expect(drawer.getByText('POST /v1/posts/import（停用）', { exact: true })).toBeVisible();
     await drawer.locator('.t-form__item').filter({ hasText: '角色' }).locator('.t-select').click();
@@ -1398,6 +1441,7 @@ test.describe('权限中心关键操作流程', () => {
     await expect.poll(() => state.policiesByServiceResource[FIRST_SERVICE_RESOURCE.key][0]?.name).toBe('部门读取策略（已编辑）');
     expect(state.policiesByServiceResource[FIRST_SERVICE_RESOURCE.key][0]).toMatchObject({
       description: '保存后的策略说明',
+      authorization_type: 'data',
       role_ids: ['role-reviewer'],
       endpoint_ids: ['endpoint-post-import'],
     });

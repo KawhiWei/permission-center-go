@@ -1,22 +1,55 @@
-// Package eval is the I/O-free PDP evaluator. Its combining algorithm is deny-overrides.
+// Package eval 实现不访问数据库和网络的 PDP 评估器，策略合并规则为拒绝优先。
 package eval
 
 import (
 	"fmt"
-	"github.com/google/uuid"
-	"github.com/luck/permission-center-go/internal/policy/model"
 	"reflect"
 	"strings"
+
+	"github.com/google/uuid"
+	"github.com/luck/permission-center-go/internal/policy/model"
 )
 
+// Evaluate 根据必填的 authorization_type 选择对应策略，未知或缺失类型直接拒绝。
 func Evaluate(input model.Input, snapshots []model.Snapshot) (model.Result, error) {
-	if strings.TrimSpace(input.ServiceResource) == "" || strings.TrimSpace(input.TenantID) == "" || strings.TrimSpace(input.Subject.ID) == "" || input.Resource.Kind != model.TargetAPIEndpoint || input.Resource.EndpointID == uuid.Nil || !input.Action.Kind.Valid() {
-		return model.Result{Decision: model.DecisionDeny, ReasonCode: model.ReasonInvalidInput}, fmt.Errorf("service_resource, tenant_id, subject.id and endpoint_id are required")
+	strategy, ok := authorizationStrategies[input.AuthorizationType]
+	if !ok {
+		return model.Result{Decision: model.DecisionDeny, ReasonCode: model.ReasonInvalidInput, MatchedPolicyIDs: []uuid.UUID{}}, fmt.Errorf("authorization_type must be api or data")
 	}
-	result := model.Result{Decision: model.DecisionDeny, ReasonCode: model.ReasonDefaultDeny}
+	return strategy.Evaluate(input, snapshots)
+}
+
+type authorizationStrategy interface {
+	Evaluate(model.Input, []model.Snapshot) (model.Result, error)
+}
+
+var authorizationStrategies = map[model.AuthorizationType]authorizationStrategy{
+	model.AuthorizationTypeAPI:  apiAuthorizationStrategy{},
+	model.AuthorizationTypeData: dataAuthorizationStrategy{},
+}
+
+type apiAuthorizationStrategy struct{}
+
+// API 策略只判断调用者是否允许访问指定 API 端点，不要求 attributes。
+func (apiAuthorizationStrategy) Evaluate(input model.Input, snapshots []model.Snapshot) (model.Result, error) {
+	return evaluateByAuthorizationType(input, snapshots, model.AuthorizationTypeAPI)
+}
+
+type dataAuthorizationStrategy struct{}
+
+// 数据策略在同一 API 入口上结合可选 attributes 判断具体业务对象是否允许访问。
+func (dataAuthorizationStrategy) Evaluate(input model.Input, snapshots []model.Snapshot) (model.Result, error) {
+	return evaluateByAuthorizationType(input, snapshots, model.AuthorizationTypeData)
+}
+
+func evaluateByAuthorizationType(input model.Input, snapshots []model.Snapshot, authorizationType model.AuthorizationType) (model.Result, error) {
+	if strings.TrimSpace(input.ServiceResource) == "" || strings.TrimSpace(input.TenantID) == "" || strings.TrimSpace(input.Subject.ID) == "" || input.Resource.Kind != model.TargetAPIEndpoint || input.Resource.EndpointID == uuid.Nil || !input.Action.Kind.Valid() {
+		return model.Result{Decision: model.DecisionDeny, ReasonCode: model.ReasonInvalidInput, MatchedPolicyIDs: []uuid.UUID{}}, fmt.Errorf("service_resource, tenant_id, subject.id and endpoint_id are required")
+	}
+	result := model.Result{Decision: model.DecisionDeny, ReasonCode: model.ReasonDefaultDeny, MatchedPolicyIDs: []uuid.UUID{}}
 	allow := false
 	for _, snapshot := range snapshots {
-		if snapshot.ServiceResource != input.ServiceResource || snapshot.ScopeLevel != model.ScopeAPI || !hasEndpoint(snapshot.EndpointIDs, input.Resource.EndpointID) || !hasRole(snapshot.RoleIDs, input.Subject.RoleIDs) {
+		if snapshot.AuthorizationType != authorizationType || snapshot.ServiceResource != input.ServiceResource || !hasEndpoint(snapshot.EndpointIDs, input.Resource.EndpointID) || !hasRole(snapshot.RoleIDs, input.Subject.RoleIDs) {
 			continue
 		}
 		matches, err := matchesCondition(snapshot.Condition, input)
@@ -30,6 +63,7 @@ func Evaluate(input model.Input, snapshots []model.Snapshot) (model.Result, erro
 		if snapshot.Version > result.SnapshotVersion {
 			result.SnapshotVersion = snapshot.Version
 		}
+		// 任意一条 deny 命中即立即拒绝，避免 allow 策略覆盖显式拒绝。
 		if snapshot.Effect == model.EffectDeny {
 			result.Decision = model.DecisionDeny
 			result.ReasonCode = model.ReasonExplicitDeny
@@ -100,9 +134,15 @@ func comparison(value model.Comparison, input model.Input) (bool, error) {
 	if value.Op == model.OpExists {
 		return exists, nil
 	}
-	right, _, err := resolve(*value.Right, input)
+	if !exists {
+		return false, nil
+	}
+	right, rightExists, err := resolve(*value.Right, input)
 	if err != nil {
 		return false, err
+	}
+	if !rightExists {
+		return false, nil
 	}
 	switch value.Op {
 	case model.OpEq:
@@ -119,6 +159,7 @@ func comparison(value model.Comparison, input model.Input) (bool, error) {
 	return false, fmt.Errorf("unsupported operator")
 }
 func resolve(ref model.ValueRef, input model.Input) (any, bool, error) {
+	// literal 直接取策略中的常量，其他 source 只能读取服务端构造的可信输入。
 	if ref.Source == model.SourceLiteral {
 		return ref.Value, true, nil
 	}

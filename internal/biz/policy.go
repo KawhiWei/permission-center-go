@@ -15,23 +15,22 @@ import (
 	"github.com/luck/permission-center-go/internal/policy/model"
 )
 
-// AuthorizationPolicy is the mutable policy-control-plane record.
+// AuthorizationPolicy 是控制面可编辑的策略记录；发布后会生成不可变快照供 PDP 使用。
 type AuthorizationPolicy struct {
 	BaseFields
-	ID              uuid.UUID        `json:"id"`
-	ServiceResource string           `json:"service_resource"`
-	Code            string           `json:"code"`
-	Name            string           `json:"name"`
-	Description     string           `json:"description"`
-	Effect          model.Effect     `json:"effect"`
-	Status          model.Status     `json:"status"`
-	ScopeLevel      model.ScopeLevel `json:"scope_level"`
-	Priority        int              `json:"priority"`
-	Condition       *model.Condition `json:"condition,omitempty"`
-	Obligations     model.Obligation `json:"obligations"`
-	CurrentVersion  int              `json:"current_version"`
-	RoleIDs         []string         `json:"role_ids"`
-	EndpointIDs     []uuid.UUID      `json:"endpoint_ids"`
+	ID                uuid.UUID               `json:"id"`
+	ServiceResource   string                  `json:"service_resource"`
+	Code              string                  `json:"code"`
+	Name              string                  `json:"name"`
+	Description       string                  `json:"description"`
+	Effect            model.Effect            `json:"effect"`
+	Status            model.Status            `json:"status"`
+	AuthorizationType model.AuthorizationType `json:"authorization_type"`
+	Priority          int                     `json:"priority"`
+	Condition         *model.Condition        `json:"condition,omitempty"`
+	CurrentVersion    int                     `json:"current_version"`
+	RoleIDs           []string                `json:"role_ids"`
+	EndpointIDs       []uuid.UUID             `json:"endpoint_ids"`
 }
 
 type PolicyVersion struct {
@@ -76,7 +75,7 @@ type PolicyRoleRepository interface {
 	Get(context.Context, string) (*Role, error)
 }
 
-// AuthorizationPolicyService coordinates policy lifecycle and PDP decisions.
+// AuthorizationPolicyService 负责策略生命周期、可信角色装载和 PDP 决策编排。
 type AuthorizationPolicyService struct {
 	repository       AuthorizationPolicyRepository
 	endpoints        PolicyEndpointRepository
@@ -130,6 +129,7 @@ func (s *AuthorizationPolicyService) Update(ctx context.Context, value *Authoriz
 		return nil, fmt.Errorf("%w: published policy must be changed through a new draft", ErrConflict)
 	}
 	value.ServiceResource = existing.ServiceResource
+	value.Status = existing.Status
 	if err := s.normalizeAndValidate(ctx, value); err != nil {
 		return nil, err
 	}
@@ -150,7 +150,8 @@ func (s *AuthorizationPolicyService) Publish(ctx context.Context, id uuid.UUID) 
 	if value.Status != model.StatusDraft && value.Status != model.StatusDisabled {
 		return nil, fmt.Errorf("%w: only draft or disabled policy can be published", ErrConflict)
 	}
-	snapshot, err := policycompile.Snapshot(model.Snapshot{PolicyID: value.ID, Version: value.CurrentVersion + 1, ServiceResource: value.ServiceResource, Effect: value.Effect, ScopeLevel: value.ScopeLevel, Priority: value.Priority, RoleIDs: value.RoleIDs, EndpointIDs: value.EndpointIDs, Condition: value.Condition, Obligations: value.Obligations})
+	// 发布时固化完整策略，运行时只读取这个版本化快照，不读取正在编辑的草稿。
+	snapshot, err := policycompile.Snapshot(model.Snapshot{PolicyID: value.ID, Version: value.CurrentVersion + 1, AuthorizationType: value.AuthorizationType, ServiceResource: value.ServiceResource, Effect: value.Effect, Priority: value.Priority, RoleIDs: value.RoleIDs, EndpointIDs: value.EndpointIDs, Condition: value.Condition})
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrInvalidArgument, err)
 	}
@@ -177,10 +178,9 @@ func (s *AuthorizationPolicyService) Rollback(ctx context.Context, id uuid.UUID,
 		return nil, err
 	}
 	value.Effect = saved.Snapshot.Effect
-	value.ScopeLevel = saved.Snapshot.ScopeLevel
+	value.AuthorizationType = saved.Snapshot.AuthorizationType
 	value.Priority = saved.Snapshot.Priority
 	value.Condition = saved.Snapshot.Condition
-	value.Obligations = saved.Snapshot.Obligations
 	value.RoleIDs = saved.Snapshot.RoleIDs
 	value.EndpointIDs = saved.Snapshot.EndpointIDs
 	value.Status = model.StatusPublished
@@ -190,11 +190,14 @@ func (s *AuthorizationPolicyService) Rollback(ctx context.Context, id uuid.UUID,
 	return s.repository.Update(ctx, value)
 }
 
-// Decide derives roles from the verified subject. Callers cannot inject role_ids.
+// Decide 根据已验证的 subject 在服务端查询角色；客户端无法通过 role_ids 提权。
 func (s *AuthorizationPolicyService) Decide(ctx context.Context, input model.Input) (model.Result, error) {
 	started := time.Now()
 	input.ServiceResource = strings.TrimSpace(input.ServiceResource)
 	input.Subject.ID = strings.TrimSpace(input.Subject.ID)
+	if !input.AuthorizationType.Valid() {
+		return model.Result{Decision: model.DecisionDeny, ReasonCode: model.ReasonInvalidInput, MatchedPolicyIDs: []uuid.UUID{}}, fmt.Errorf("%w: authorization_type must be api or data", ErrInvalidArgument)
+	}
 	if err := s.ensureScope(ctx, input.ServiceResource); err != nil {
 		return model.Result{}, err
 	}
@@ -203,11 +206,12 @@ func (s *AuthorizationPolicyService) Decide(ctx context.Context, input model.Inp
 		return model.Result{}, err
 	}
 	if endpoint.ServiceResource != input.ServiceResource {
-		return model.Result{Decision: model.DecisionDeny, ReasonCode: model.ReasonScopeMismatch}, nil
+		return model.Result{Decision: model.DecisionDeny, ReasonCode: model.ReasonScopeMismatch, MatchedPolicyIDs: []uuid.UUID{}}, nil
 	}
 	if !endpoint.Enabled {
-		return model.Result{Decision: model.DecisionDeny, ReasonCode: model.ReasonEndpointDisabled}, nil
+		return model.Result{Decision: model.DecisionDeny, ReasonCode: model.ReasonEndpointDisabled, MatchedPolicyIDs: []uuid.UUID{}}, nil
 	}
+	// 角色是鉴权中心掌握的可信事实，不能使用请求 JSON 中的角色信息。
 	roleIDs, err := s.userRoles.RoleIDs(ctx, input.Subject.ID, input.ServiceResource)
 	if err != nil {
 		return model.Result{}, err
@@ -220,7 +224,10 @@ func (s *AuthorizationPolicyService) Decide(ctx context.Context, input model.Inp
 	result, evaluateErr := policyeval.Evaluate(input, snapshots)
 	log := DecisionLog{DecisionID: uuid.New(), RequestID: input.RequestID, ServiceResource: input.ServiceResource, TenantID: input.TenantID, SubjectID: input.Subject.ID, EndpointID: input.Resource.EndpointID, Decision: result.Decision, ReasonCode: result.ReasonCode, MatchedPolicyIDs: result.MatchedPolicyIDs, SnapshotVersion: result.SnapshotVersion, LatencyMS: time.Since(started).Milliseconds(), OccurredAt: time.Now().UTC()}
 	_ = s.repository.SaveDecisionLog(ctx, log)
-	return result, evaluateErr
+	if evaluateErr != nil {
+		return result, fmt.Errorf("%w: %v", ErrInvalidArgument, evaluateErr)
+	}
+	return result, nil
 }
 func (s *AuthorizationPolicyService) DecisionLogs(ctx context.Context, serviceResource string, endpointID uuid.UUID) ([]DecisionLog, error) {
 	return s.repository.ListDecisionLogs(ctx, serviceResource, endpointID)
@@ -240,8 +247,8 @@ func (s *AuthorizationPolicyService) normalizeAndValidate(ctx context.Context, v
 		return err
 	}
 	value.Description = strings.TrimSpace(value.Description)
-	if !value.Effect.Valid() || value.ScopeLevel != model.ScopeAPI {
-		return fmt.Errorf("%w: effect and api scope_level are required", ErrInvalidArgument)
+	if !value.Effect.Valid() || !value.AuthorizationType.Valid() {
+		return fmt.Errorf("%w: effect and authorization_type are required", ErrInvalidArgument)
 	}
 	if len(value.RoleIDs) == 0 || len(value.EndpointIDs) == 0 {
 		return fmt.Errorf("%w: at least one role and API endpoint are required", ErrInvalidArgument)
@@ -264,7 +271,7 @@ func (s *AuthorizationPolicyService) normalizeAndValidate(ctx context.Context, v
 			return fmt.Errorf("%w: endpoint belongs to another service_resource", ErrConflict)
 		}
 	}
-	snapshot, err := policycompile.Snapshot(model.Snapshot{ServiceResource: serviceResource, Effect: value.Effect, ScopeLevel: value.ScopeLevel, RoleIDs: value.RoleIDs, EndpointIDs: value.EndpointIDs, Condition: value.Condition, Obligations: value.Obligations})
+	snapshot, err := policycompile.Snapshot(model.Snapshot{ServiceResource: serviceResource, Effect: value.Effect, AuthorizationType: value.AuthorizationType, RoleIDs: value.RoleIDs, EndpointIDs: value.EndpointIDs, Condition: value.Condition})
 	if err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalidArgument, err)
 	}

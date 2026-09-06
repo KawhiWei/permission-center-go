@@ -36,9 +36,9 @@ Dashboard 左侧导航和受保护页面路由均由当前服务资源的 `/v1/m
 | GET/PUT/DELETE | `/v1/authorization/api-endpoints/{id}` | 获取、更新或软删除 API 端点 |
 | POST | `/v1/authorization/api-endpoints/import-swagger` | 从 Swagger/OpenAPI 地址导入 API 端点 |
 
-Swagger 导入支持 Swagger 2.0 和 OpenAPI 3.x 的 JSON、YAML 及常见 Swagger UI 页面，兼容 Java、.NET 和 Go 常见的 controller/tag/operationId 表达。导入时必须提供 `service_resource`，每条端点保存 Controller、Method、Path 和 Summary；重复的 Method + Path 会被跳过。自研 PDP 的策略、角色与 API 绑定及后续行级、属性级扩展见 [自研 PDP 授权引擎设计](docs/custom-pdp-design.md)。
+Swagger 导入支持 Swagger 2.0 和 OpenAPI 3.x 的 JSON、YAML 及常见 Swagger UI 页面，兼容 Java、.NET 和 Go 常见的 controller/tag/operationId 表达。导入时必须提供 `service_resource`，每条端点保存 Controller、Method、Path 和 Summary；重复的 Method + Path 会被跳过。自研 PDP 的策略、角色与 API 绑定见 [自研 PDP 授权引擎设计](docs/custom-pdp-design.md)。
 
-PDP 控制面使用 `/v1/authorization/policies` 管理草稿、发布和回滚；运行时使用 `POST /v1/pdp/decisions`，请求必须提供 `subject`、`action` 和 `resource`，首期资源类型固定为 `api_endpoint`。业务服务通过 `sdk/pdp` 的 fail-closed middleware 接入：身份和租户必须从已验证 token/session 解析，API 端点必须从服务端路由模板解析，不能由浏览器或请求体提供角色与租户事实。
+PDP 控制面使用 `/v1/authorization/policies` 管理草稿、发布和回滚，策略通过必填的 `authorization_type=api|data` 区分接口级授权和针对具体业务对象属性的授权；该字段会写入发布快照并在回滚时恢复。运行时使用 `POST /v1/pdp/decisions`，请求必须显式提供相同的 `authorization_type`，且只会匹配对应类型的已发布策略，缺失或未知值直接拒绝。请求还必须提供 `subject`、`action` 和 `resource`，当前两类授权都以 `api_endpoint` 定位业务入口。`subject.attributes`、`resource.attributes` 和 `context` 均为可选字段，仅在策略条件引用时传入。这里的 `data` 表示单个业务对象的 allow/deny ABAC，不包含批量行过滤或字段脱敏。身份、租户和可选属性必须从已验证 token/session 或可信服务端数据解析，API 端点和鉴权类型必须由服务端路由配置确定，不能由浏览器或请求体自由选择。
 
 启用 OIDC 后，上述 `/v1/*` 接口全部要求登录。`/healthz` 与以下认证接口公开：
 
