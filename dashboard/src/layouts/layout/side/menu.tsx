@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { type ComponentType, useEffect, useMemo, useState } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { Menu, MenuValue } from 'tdesign-react';
 import {
@@ -8,9 +8,11 @@ import {
   FolderIcon,
   LockOnIcon,
   MenuApplicationIcon,
+  ToolsIcon,
   UserIcon,
   UsergroupIcon,
 } from 'tdesign-icons-react';
+import type { IconProps } from 'tdesign-icons-react';
 
 import { setPageLoading } from '../../../page-loading';
 import type { NavigationMenu } from '../../../router/dynamic-routes';
@@ -22,27 +24,24 @@ interface IProp {
   menus: NavigationMenu[];
 }
 
+// 后端返回图标标识，前端只负责将标识解析为已打包的 TDesign 图标组件。
+const menuIconComponents: Record<string, ComponentType<IconProps>> = {
+  api: ApiIcon,
+  cloud: CloudIcon,
+  dashboard: DashboardIcon,
+  folder: FolderIcon,
+  lock: LockOnIcon,
+  'lock-on': LockOnIcon,
+  menu: MenuApplicationIcon,
+  'menu-application': MenuApplicationIcon,
+  tools: ToolsIcon,
+  user: UserIcon,
+  usergroup: UsergroupIcon,
+};
+
 const getMenuIcon = (iconName: string) => {
-  switch (iconName.trim().toLowerCase()) {
-    case 'api':
-      return <ApiIcon />;
-    case 'cloud':
-      return <CloudIcon />;
-    case 'dashboard':
-      return <DashboardIcon />;
-    case 'folder':
-      return <FolderIcon />;
-    case 'lock':
-      return <LockOnIcon />;
-    case 'menu':
-      return <MenuApplicationIcon />;
-    case 'user':
-      return <UserIcon />;
-    case 'usergroup':
-      return <UsergroupIcon />;
-    default:
-      return undefined;
-  }
+  const IconComponent = menuIconComponents[iconName.trim().toLowerCase()] || FolderIcon;
+  return <IconComponent />;
 };
 
 const findMenu = (menus: NavigationMenu[], path: string): NavigationMenu | undefined => {

@@ -13,10 +13,18 @@ import (
 
 type Config struct {
 	HTTP            HTTPConfig            `yaml:"http"`
+	Logging         LoggingConfig         `yaml:"logging"`
 	Database        DatabaseConfig        `yaml:"database"`
 	OIDC            OIDCConfig            `yaml:"oidc"`
 	ServiceResource ServiceResourceConfig `yaml:"service_resource"`
 	PDP             PDPConfig             `yaml:"pdp"`
+}
+
+// LoggingConfig controls the shared Luck log format and destinations.
+type LoggingConfig struct {
+	Module       string `yaml:"module"`
+	MinimumLevel string `yaml:"minimum_level"`
+	FilePath     string `yaml:"file_path"`
 }
 
 // ServiceResourceConfig 配置服务资源来源和 NexusAuth 连接信息。
@@ -102,6 +110,7 @@ func Load(path string) (*Config, error) {
 	if value := os.Getenv("PERMISSION_CENTER_HTTP_ADDR"); value != "" {
 		cfg.HTTP.Addr = value
 	}
+	applyLoggingEnv(&cfg.Logging)
 	applyOIDCEnv(&cfg.OIDC)
 	if value := os.Getenv("PERMISSION_CENTER_PDP_SERVICE_CREDENTIAL"); value != "" {
 		cfg.PDP.ServiceCredential = value
@@ -140,6 +149,20 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 	return &cfg, nil
+}
+
+func applyLoggingEnv(cfg *LoggingConfig) {
+	if value := os.Getenv("AppKey"); strings.TrimSpace(value) != "" {
+		cfg.Module = value
+	} else if value := os.Getenv("PERMISSION_CENTER_LOGGING_MODULE"); strings.TrimSpace(value) != "" {
+		cfg.Module = value
+	}
+	if value := os.Getenv("PERMISSION_CENTER_LOGGING_MINIMUM_LEVEL"); strings.TrimSpace(value) != "" {
+		cfg.MinimumLevel = value
+	}
+	if value := os.Getenv("PERMISSION_CENTER_LOGGING_FILE_PATH"); strings.TrimSpace(value) != "" {
+		cfg.FilePath = value
+	}
 }
 
 func applyServiceResourceEnv(cfg *ServiceResourceConfig) error {
@@ -216,6 +239,12 @@ func (c OIDCConfig) Validate() error {
 	}
 	if strings.TrimSpace(c.Authority) == "" || strings.TrimSpace(c.ClientID) == "" {
 		return fmt.Errorf("oidc.authority and oidc.client_id are required when oidc is enabled")
+	}
+	if strings.TrimSpace(c.Audience) == "" {
+		return fmt.Errorf("oidc.audience is required when oidc is enabled")
+	}
+	if strings.TrimSpace(c.ClientSecret) == "" {
+		return fmt.Errorf("oidc.client_secret is required for token introspection when oidc is enabled")
 	}
 	if err := validateHTTPURL(c.Authority, "oidc.authority"); err != nil {
 		return err

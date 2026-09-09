@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -17,6 +17,7 @@ import (
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/google/uuid"
+	"github.com/luck/permission-center-go/internal/logging"
 )
 
 type config struct {
@@ -88,16 +89,34 @@ type decisionResponse struct {
 }
 
 func main() {
+	os.Exit(run())
+}
+
+func run() int {
+	logger, closer, err := logging.New(logging.Options{
+		Module:       env("AppKey", "permission-center-demo"),
+		MinimumLevel: env("DEMO_LOGGING_MINIMUM_LEVEL", "info"),
+		FilePath:     strings.TrimSpace(os.Getenv("DEMO_LOGGING_FILE_PATH")),
+	})
+	if err != nil {
+		logging.NewText(os.Stderr, "permission-center-demo", "info").Error("Configure logging failed.", slog.Any("Error", err))
+		return 1
+	}
+	defer closer.Close()
+	slog.SetDefault(logger)
+
 	cfg, err := loadConfig()
 	if err != nil {
-		log.Fatal(err)
+		logger.Error("Load configuration failed.", slog.Any("Error", err))
+		return 1
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	provider, err := oidc.NewProvider(ctx, cfg.oidcIssuer)
 	if err != nil {
-		log.Fatalf("discover OIDC provider: %v", err)
+		logger.Error("Discover OIDC provider failed.", slog.Any("Error", err))
+		return 1
 	}
 	verifier := &oidcIdentityVerifier{
 		verifier:        provider.Verifier(&oidc.Config{ClientID: cfg.oidcAudience}),
@@ -119,9 +138,13 @@ func main() {
 	mux.HandleFunc("GET /openapi.json", serveOpenAPI)
 	mux.Handle("GET /api/orders/{id}", authorize(verifier, pdp, http.HandlerFunc(getOrder)))
 
-	server := &http.Server{Addr: cfg.addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
-	log.Printf("demo business API listening on %s", cfg.addr)
-	log.Fatal(server.ListenAndServe())
+	server := &http.Server{Addr: cfg.addr, Handler: logging.HTTPMiddleware(logger, nil)(mux), ReadHeaderTimeout: 5 * time.Second}
+	logger.Info("Demo business API listening.", slog.String("Address", cfg.addr))
+	if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		logger.Error("HTTP server stopped unexpectedly.", slog.Any("Error", err))
+		return 1
+	}
+	return 0
 }
 
 func loadConfig() (config, error) {
@@ -233,7 +256,11 @@ func authorize(verifier identityVerifier, pdp *pdpHTTPClient, next http.Handler)
 		}
 		result, err := pdp.Decide(r.Context(), id, r.Method, requestID)
 		if err != nil {
-			log.Printf("PDP request %s failed: %v", requestID, err)
+			logging.FromContext(r.Context()).Error("PDP request failed.",
+				slog.String(logging.Subcategory, "authorize"),
+				slog.String("PDPRequestID", requestID),
+				slog.Any("Error", err),
+			)
 			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 			return
 		}

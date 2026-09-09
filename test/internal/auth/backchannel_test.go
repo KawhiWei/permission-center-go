@@ -29,6 +29,7 @@ func TestNewUsesBackchannelWithoutChangingBrowserEndpoints(t *testing.T) {
 			"authorization_endpoint":                publicAuthority + "/connect/authorize",
 			"token_endpoint":                        publicAuthority + "/connect/token",
 			"jwks_uri":                              publicAuthority + "/.well-known/openid-configuration/jwks",
+			"introspection_endpoint":                publicAuthority + "/connect/introspect",
 			"end_session_endpoint":                  publicAuthority + "/connect/endsession",
 			"id_token_signing_alg_values_supported": []string{"RS256"},
 		})
@@ -49,6 +50,7 @@ func TestNewUsesBackchannelWithoutChangingBrowserEndpoints(t *testing.T) {
 		Authority:             publicAuthority,
 		BackchannelAuthority:  backchannelAuthority,
 		ClientID:              "permission-center-api",
+		Audience:              "permission.center.api",
 		ClientSecret:          "test-client-secret",
 		RedirectURI:           "http://localhost:8080/signin-oidc",
 		PostLogoutRedirectURI: "http://localhost:5274/",
@@ -85,6 +87,47 @@ func TestNewUsesBackchannelWithoutChangingBrowserEndpoints(t *testing.T) {
 	}
 	if !strings.HasSuffix(parsed.Path, "/connect/authorize") {
 		t.Fatalf("authorization path = %q", parsed.Path)
+	}
+}
+
+func TestIntrospectNexusAccessTokenUsesBasicAuthentication(t *testing.T) {
+	client := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.URL.String() != "http://nexus-auth:5100/connect/introspect" {
+			t.Fatalf("introspection URL = %q", request.URL.String())
+		}
+		clientID, clientSecret, ok := request.BasicAuth()
+		if !ok || clientID != "permission.center" || clientSecret != "client-secret" {
+			t.Fatalf("basic auth = %q / %q / %v", clientID, clientSecret, ok)
+		}
+		if err := request.ParseForm(); err != nil {
+			t.Fatal(err)
+		}
+		if request.PostForm.Get("token") != "access-token" || len(request.PostForm) != 1 {
+			t.Fatalf("introspection form = %#v", request.PostForm)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body: io.NopCloser(strings.NewReader(
+				`{"active":true,"sub":"user-42","client_id":"permission.center","token_use":"access_token"}`,
+			)),
+			Request: request,
+		}, nil
+	})}
+
+	result, err := introspectNexusAccessToken(
+		context.Background(),
+		"access-token",
+		client,
+		"http://nexus-auth:5100/connect/introspect",
+		"permission.center",
+		"client-secret",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Active || result.Subject != "user-42" || result.ClientID != "permission.center" || result.TokenUse != "access_token" {
+		t.Fatalf("introspection result = %#v", result)
 	}
 }
 

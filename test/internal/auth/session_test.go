@@ -1,12 +1,18 @@
 package auth
 
 import (
+	"context"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/luck/permission-center-go/internal/config"
 )
 
@@ -15,6 +21,65 @@ func testConfig(enabled bool) config.OIDCConfig {
 		Enabled:       enabled,
 		SessionSecret: "test-session-secret-at-least-32-characters",
 		CookieName:    "permission_test_session",
+	}
+}
+
+type payloadKeySet struct{ payload []byte }
+
+func (s payloadKeySet) VerifySignature(context.Context, string) ([]byte, error) {
+	return s.payload, nil
+}
+
+func nexusAccessTokenVerifier(t *testing.T, expiresAt time.Time, tokenUse string, expectedAudience ...string) *oidc.IDTokenVerifier {
+	t.Helper()
+	payload, err := json.Marshal(map[string]any{
+		"iss":       "http://nexus-auth:5100",
+		"sub":       "user-42",
+		"aud":       "permission.center.api",
+		"exp":       expiresAt.Unix(),
+		"iat":       time.Now().Add(-time.Minute).Unix(),
+		"token_use": tokenUse,
+		"name":      "Alice",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	audience := "permission.center.api"
+	if len(expectedAudience) > 0 {
+		audience = expectedAudience[0]
+	}
+	return oidc.NewVerifier("http://nexus-auth:5100", payloadKeySet{payload: payload}, &oidc.Config{
+		ClientID: audience,
+	})
+}
+
+func compactTestJWT() string {
+	header := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256"}`))
+	payload := base64.RawURLEncoding.EncodeToString([]byte(`{}`))
+	signature := base64.RawURLEncoding.EncodeToString([]byte("signature"))
+	return header + "." + payload + "." + signature
+}
+
+func TestVerifyNexusAccessTokenChecksExpiryAndTokenUse(t *testing.T) {
+	validVerifier := nexusAccessTokenVerifier(t, time.Now().Add(time.Hour), "access_token")
+	user, err := verifyNexusAccessToken(context.Background(), compactTestJWT(), validVerifier, nil)
+	if err != nil || user.Subject != "user-42" || user.Name != "Alice" {
+		t.Fatalf("verified user = %#v, err = %v", user, err)
+	}
+
+	expiredVerifier := nexusAccessTokenVerifier(t, time.Now().Add(-time.Minute), "access_token")
+	if _, err := verifyNexusAccessToken(context.Background(), compactTestJWT(), expiredVerifier, nil); !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("expired token error = %v", err)
+	}
+
+	idTokenVerifier := nexusAccessTokenVerifier(t, time.Now().Add(time.Hour), "id_token")
+	if _, err := verifyNexusAccessToken(context.Background(), compactTestJWT(), idTokenVerifier, nil); !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("id token error = %v", err)
+	}
+
+	wrongAudienceVerifier := nexusAccessTokenVerifier(t, time.Now().Add(time.Hour), "access_token", "other.api")
+	if _, err := verifyNexusAccessToken(context.Background(), compactTestJWT(), wrongAudienceVerifier, nil); !errors.Is(err, ErrInvalidToken) {
+		t.Fatalf("wrong audience error = %v", err)
 	}
 }
 
@@ -62,6 +127,90 @@ func TestMiddlewareRequiresSessionOnlyWhenEnabled(t *testing.T) {
 	enabled.Middleware(next).ServeHTTP(enabledResponse, httptest.NewRequest(http.MethodGet, "/v1/roles", nil))
 	if enabledResponse.Code != http.StatusUnauthorized {
 		t.Fatalf("enabled auth status = %d", enabledResponse.Code)
+	}
+}
+
+func TestMiddlewareAuthenticatesBearerAndAddsUserToContext(t *testing.T) {
+	service, err := NewForTest(testConfig(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.verifyAccessToken = func(_ context.Context, rawToken string) (User, error) {
+		if rawToken != "valid-access-token" {
+			t.Fatalf("raw token = %q", rawToken)
+		}
+		return User{Subject: "user-42", Name: "Alice"}, nil
+	}
+
+	var contextUser User
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var ok bool
+		contextUser, ok = UserFromContext(r.Context())
+		if !ok {
+			t.Fatal("verified user missing from request context")
+		}
+		if me, ok := service.Me(r); !ok || me.Subject != contextUser.Subject {
+			t.Fatalf("service user = %#v, %v", me, ok)
+		}
+		if userID, ok := UserIDFromContext(r.Context()); !ok || userID != "user-42" {
+			t.Fatalf("context user id = %q, %v", userID, ok)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	request := httptest.NewRequest(http.MethodGet, "/v1/roles", nil)
+	request.Header.Set("Authorization", "bearer valid-access-token")
+	response := httptest.NewRecorder()
+	service.Middleware(next).ServeHTTP(response, request)
+
+	if response.Code != http.StatusNoContent || contextUser.Subject != "user-42" {
+		t.Fatalf("status = %d, user = %#v", response.Code, contextUser)
+	}
+}
+
+func TestMiddlewareRejectsInvalidBearerWithoutCookieFallback(t *testing.T) {
+	service, err := NewForTest(testConfig(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	service.verifyAccessToken = func(context.Context, string) (User, error) {
+		return User{}, errors.New("token expired")
+	}
+
+	cookieRecorder := httptest.NewRecorder()
+	if err := service.sessions.save(cookieRecorder, &sessionData{User: &sessionUser{
+		Subject: "cookie-user", ExpiresAt: time.Now().Add(time.Hour).Unix(),
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/v1/roles", nil)
+	request.AddCookie(cookieRecorder.Result().Cookies()[0])
+	request.Header.Set("Authorization", "Bearer expired-token")
+	response := httptest.NewRecorder()
+	service.Middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("invalid bearer must not fall back to a valid cookie")
+	})).ServeHTTP(response, request)
+
+	if response.Code != http.StatusUnauthorized || response.Header().Get("WWW-Authenticate") != `Bearer error="invalid_token"` {
+		t.Fatalf("status = %d, challenge = %q", response.Code, response.Header().Get("WWW-Authenticate"))
+	}
+	if !strings.Contains(response.Body.String(), `"error":"invalid_token"`) {
+		t.Fatalf("body = %q", response.Body.String())
+	}
+}
+
+func TestMiddlewareRejectsMalformedBearer(t *testing.T) {
+	service, err := NewForTest(testConfig(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/v1/roles", nil)
+	request.Header.Set("Authorization", "Bearer")
+	response := httptest.NewRecorder()
+	service.Middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("malformed bearer must not reach the handler")
+	})).ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d", response.Code)
 	}
 }
 

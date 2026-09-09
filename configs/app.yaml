@@ -1,5 +1,10 @@
 http:
   addr: ":8080"
+logging:
+  module: "permission-center-go"
+  minimum_level: "info"
+  # Set a path such as "logs/permission-center-go.log" to also write to a file.
+  file_path: ""
 database:
   url: "postgres://postgres:postgres@localhost:55433/permission_center?sslmode=disable"
   max_conns: 10

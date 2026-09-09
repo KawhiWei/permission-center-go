@@ -424,7 +424,6 @@ LANGUAGE plpgsql
 AS $$
 DECLARE
     permission_group_id UUID;
-    basic_data_group_id UUID;
     developer_group_id UUID;
 BEGIN
     IF btrim(COALESCE(p_service_resource, '')) = '' THEN
@@ -468,44 +467,7 @@ BEGIN
            AND existing.is_deleted = FALSE
      );
 
-    SELECT id INTO basic_data_group_id
-      FROM menus
-     WHERE service_resource = p_service_resource
-       AND code = 'basic-data'
-       AND is_deleted = FALSE
-     LIMIT 1;
-
-    IF basic_data_group_id IS NULL THEN
-        INSERT INTO menus (
-            service_resource, parent_id, menu_type, code, name, description,
-            route, component, icon, sort_order, metadata, enabled
-        ) VALUES (
-            p_service_resource, NULL, 'menu', 'basic-data', '基础数据',
-            '权限中心基础目录', '/basic-data', NULL, 'cloud', 20, '{}'::JSONB, TRUE
-        ) RETURNING id INTO basic_data_group_id;
-    END IF;
-
-    INSERT INTO menus (
-        service_resource, parent_id, menu_type, code, name, description,
-        route, component, icon, sort_order, metadata, enabled
-    )
-    SELECT p_service_resource, basic_data_group_id, 'menu', definition.code,
-           definition.name, definition.description, definition.route,
-           definition.component, definition.icon, definition.sort_order, '{}'::JSONB, TRUE
-      FROM (VALUES
-        ('service-resource-management', '服务资源管理', '维护服务资源目录',
-         '/service-resources', '/permission-center/service-resource-management/index.tsx', 'cloud', 10),
-        ('api-endpoint-management', 'API 端点管理', '维护和导入 API 端点',
-         '/api-endpoints', '/permission-center/api-endpoint-management/index.tsx', 'api', 20)
-      ) AS definition(code, name, description, route, component, icon, sort_order)
-     WHERE NOT EXISTS (
-        SELECT 1 FROM menus existing
-         WHERE existing.service_resource = p_service_resource
-           AND existing.code = definition.code
-           AND existing.is_deleted = FALSE
-     );
-
-    -- 开发工具类页面统一放在“开发者中心”目录下。
+    -- 服务资源、API 端点和菜单配置统一放在“开发者中心”目录下。
     SELECT id INTO developer_group_id
       FROM menus
      WHERE service_resource = p_service_resource
@@ -523,19 +485,25 @@ BEGIN
         ) RETURNING id INTO developer_group_id;
     END IF;
 
-    -- 菜单管理使用现有页面组件，并作为“开发者中心”的子菜单展示。
     INSERT INTO menus (
         service_resource, parent_id, menu_type, code, name, description,
         route, component, icon, sort_order, metadata, enabled
     )
-    SELECT p_service_resource, developer_group_id, 'menu',
-           'menu-management', '菜单管理', '维护动态导航和按钮权限',
-           '/menus', '/permission-center/menu-management/index.tsx', 'menu', 10,
-           '{}'::JSONB, TRUE
+    SELECT p_service_resource, developer_group_id, 'menu', definition.code,
+           definition.name, definition.description, definition.route,
+           definition.component, definition.icon, definition.sort_order, '{}'::JSONB, TRUE
+      FROM (VALUES
+        ('service-resource-management', '服务资源管理', '维护服务资源目录',
+         '/service-resources', '/permission-center/service-resource-management/index.tsx', 'cloud', 10),
+        ('api-endpoint-management', 'API 端点管理', '维护和导入 API 端点',
+         '/api-endpoints', '/permission-center/api-endpoint-management/index.tsx', 'api', 20),
+        ('menu-management', '菜单管理', '维护动态导航和按钮权限',
+         '/menus', '/permission-center/menu-management/index.tsx', 'menu', 30)
+      ) AS definition(code, name, description, route, component, icon, sort_order)
      WHERE NOT EXISTS (
         SELECT 1 FROM menus existing
          WHERE existing.service_resource = p_service_resource
-           AND existing.code = 'menu-management'
+           AND existing.code = definition.code
            AND existing.is_deleted = FALSE
      );
 END;

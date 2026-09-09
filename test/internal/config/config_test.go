@@ -25,6 +25,8 @@ oidc:
   authority: "http://localhost:5100"
   backchannel_authority: "http://yaml-nexus-auth:5100"
   client_id: "permission-center-api"
+  client_secret: "test-client-secret"
+  audience: "permission.center.api"
   redirect_uri: "http://localhost:8080/signin-oidc"
   post_logout_redirect_uri: "http://localhost:5274/"
   scopes: ["openid"]
@@ -47,6 +49,31 @@ oidc:
 	}
 }
 
+func TestLoadLoggingUsesAppKeyBeforeModuleEnvironment(t *testing.T) {
+	clearConfigEnv(t)
+	configPath := filepath.Join(t.TempDir(), "app.yaml")
+	contents := []byte(`
+http: {addr: ":8080"}
+database: {url: "postgres://postgres:postgres@localhost:55433/permission_center?sslmode=disable"}
+service_resource: {source: local}
+logging: {module: "yaml-module", minimum_level: "info"}
+oidc: {enabled: false}
+`)
+	if err := os.WriteFile(configPath, contents, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PERMISSION_CENTER_LOGGING_MODULE", "environment-module")
+	t.Setenv("AppKey", "app-key-module")
+
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Logging.Module != "app-key-module" {
+		t.Fatalf("logging module = %q", cfg.Logging.Module)
+	}
+}
+
 func TestOIDCValidateBackchannelAuthority(t *testing.T) {
 	cfg := validOIDCConfig()
 	if err := cfg.Validate(); err != nil {
@@ -57,6 +84,22 @@ func TestOIDCValidateBackchannelAuthority(t *testing.T) {
 	err := cfg.Validate()
 	if err == nil || !strings.Contains(err.Error(), "oidc.backchannel_authority") {
 		t.Fatalf("invalid backchannel authority error = %v", err)
+	}
+}
+
+func TestOIDCValidateRequiresAudience(t *testing.T) {
+	cfg := validOIDCConfig()
+	cfg.Audience = ""
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "oidc.audience") {
+		t.Fatalf("missing audience error = %v", err)
+	}
+}
+
+func TestOIDCValidateRequiresClientSecretForIntrospection(t *testing.T) {
+	cfg := validOIDCConfig()
+	cfg.ClientSecret = ""
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "oidc.client_secret") {
+		t.Fatalf("missing client secret error = %v", err)
 	}
 }
 
@@ -180,6 +223,8 @@ func validOIDCConfig() OIDCConfig {
 		Enabled:               true,
 		Authority:             "http://localhost:5100",
 		ClientID:              "permission-center-api",
+		ClientSecret:          "test-client-secret",
+		Audience:              "permission.center.api",
 		RedirectURI:           "http://localhost:8080/signin-oidc",
 		PostLogoutRedirectURI: "http://localhost:5274/",
 		Scopes:                []string{"openid"},
@@ -191,8 +236,12 @@ func validOIDCConfig() OIDCConfig {
 func clearConfigEnv(t *testing.T) {
 	t.Helper()
 	for _, key := range []string{
+		"AppKey",
 		"PERMISSION_CENTER_DATABASE_URL",
 		"PERMISSION_CENTER_HTTP_ADDR",
+		"PERMISSION_CENTER_LOGGING_MODULE",
+		"PERMISSION_CENTER_LOGGING_MINIMUM_LEVEL",
+		"PERMISSION_CENTER_LOGGING_FILE_PATH",
 		"PERMISSION_CENTER_OIDC_ENABLED",
 		"PERMISSION_CENTER_OIDC_AUTHORITY",
 		"PERMISSION_CENTER_OIDC_BACKCHANNEL_AUTHORITY",

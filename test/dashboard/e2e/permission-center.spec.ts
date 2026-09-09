@@ -171,20 +171,20 @@ const makeNavigationMenus = (serviceResource: string): MenuRecord[] => [
   makeMenu(serviceResource, `${serviceResource}-roles`, 'role-management', '角色管理', 'menu', `${serviceResource}-permission-center`, {
     path: '/roles', component: '/permission-center/role-management/index.tsx', icon: 'usergroup', sort: 10,
   }),
-  makeMenu(serviceResource, `${serviceResource}-menus`, 'menu-management', '菜单与按钮管理', 'menu', `${serviceResource}-permission-center`, {
-    path: '/menus', component: '/permission-center/menu-management/index.tsx', icon: 'menu', sort: 20,
-  }),
   makeMenu(serviceResource, `${serviceResource}-policies`, 'policy-management', 'PDP 授权策略', 'menu', `${serviceResource}-permission-center`, {
     path: '/policies', component: '/permission-center/policy-management/index.tsx', icon: 'lock', sort: 40,
   }),
-  makeMenu(serviceResource, `${serviceResource}-basic-data`, 'basic-data', '基础数据', 'menu', null, {
-    path: '/basic-data', component: '', icon: 'cloud', sort: 20,
+  makeMenu(serviceResource, `${serviceResource}-developer-center`, 'developer-center', '开发者中心', 'menu', null, {
+    path: '/developer-center', component: '', icon: 'tools', sort: 30,
   }),
-  makeMenu(serviceResource, `${serviceResource}-service-resources`, 'service-resource-management', '服务资源管理', 'menu', `${serviceResource}-basic-data`, {
+  makeMenu(serviceResource, `${serviceResource}-service-resources`, 'service-resource-management', '服务资源管理', 'menu', `${serviceResource}-developer-center`, {
     path: '/service-resources', component: '/permission-center/service-resource-management/index.tsx', icon: 'cloud', sort: 10,
   }),
-  makeMenu(serviceResource, `${serviceResource}-api-endpoints`, 'api-endpoint-management', 'API 端点管理', 'menu', `${serviceResource}-basic-data`, {
+  makeMenu(serviceResource, `${serviceResource}-api-endpoints`, 'api-endpoint-management', 'API 端点管理', 'menu', `${serviceResource}-developer-center`, {
     path: '/api-endpoints', component: '/permission-center/api-endpoint-management/index.tsx', icon: 'api', sort: 20,
+  }),
+  makeMenu(serviceResource, `${serviceResource}-menus`, 'menu-management', '菜单管理', 'menu', `${serviceResource}-developer-center`, {
+    path: '/menus', component: '/permission-center/menu-management/index.tsx', icon: 'menu', sort: 30,
   }),
 ];
 
@@ -827,6 +827,16 @@ test.describe('权限中心关键操作流程', () => {
     await expect(page.getByText('角色管理', { exact: true })).toHaveCount(0);
     await expect(page.getByText('停用菜单', { exact: true })).toHaveCount(0);
     await expect(page.getByText('新增按钮', { exact: true })).toHaveCount(0);
+  });
+
+  test('侧栏按照后台菜单的 icon 字段渲染图标', async ({ page }) => {
+    await installAPIMocks(page);
+    await seedServiceResource(page);
+    await page.goto('/dashboard');
+
+    const sidebar = page.getByRole('complementary');
+    await expect(sidebar.getByText('开发者中心', { exact: true })).toBeVisible();
+    await expect(sidebar.locator('.t-icon-tools')).toBeVisible();
   });
 
   test('退出登录会清空历史页签，重新登录后只保留仪表盘', async ({ page }) => {

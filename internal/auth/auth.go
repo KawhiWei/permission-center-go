@@ -9,8 +9,11 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -18,12 +21,14 @@ import (
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/luck/permission-center-go/internal/config"
+	"github.com/luck/permission-center-go/internal/logging"
 	"golang.org/x/oauth2"
 )
 
 var (
 	ErrDisabled        = errors.New("oidc authentication is disabled")
 	ErrUnauthenticated = errors.New("authentication required")
+	ErrInvalidToken    = errors.New("invalid access token")
 	ErrInvalidRequest  = errors.New("invalid authentication request")
 	ErrInvalidState    = errors.New("invalid authentication state")
 	ErrInvalidNonce    = errors.New("invalid authentication nonce")
@@ -37,6 +42,25 @@ type User struct {
 	Name          string `json:"name,omitempty"`
 	Picture       string `json:"picture,omitempty"`
 	EmailVerified bool   `json:"email_verified,omitempty"`
+}
+
+type userContextKey struct{}
+
+// WithUser stores a verified NexusAuth user in the request context.
+func WithUser(ctx context.Context, user User) context.Context {
+	return context.WithValue(ctx, userContextKey{}, user)
+}
+
+// UserFromContext returns the verified NexusAuth user for the current request.
+func UserFromContext(ctx context.Context) (User, bool) {
+	user, ok := ctx.Value(userContextKey{}).(User)
+	return user, ok && user.Subject != ""
+}
+
+// UserIDFromContext returns the NexusAuth user ID stored in the access token's sub claim.
+func UserIDFromContext(ctx context.Context) (string, bool) {
+	user, ok := UserFromContext(ctx)
+	return user.Subject, ok
 }
 
 // PublicConfig is safe to return to a browser. It excludes client secrets and
@@ -56,12 +80,20 @@ type Service struct {
 	enabled              bool
 	oauthConfig          *oauth2.Config
 	verifier             *oidc.IDTokenVerifier
+	verifyAccessToken    func(context.Context, string) (User, error)
 	endSessionEndpoint   string
 	sessions             *sessionStore
 	httpClient           *http.Client
 	publicAuthority      *url.URL
 	backchannelAuthority *url.URL
 	now                  func() time.Time
+}
+
+type accessTokenIntrospection struct {
+	Active   bool   `json:"active"`
+	Subject  string `json:"sub"`
+	ClientID string `json:"client_id"`
+	TokenUse string `json:"token_use"`
 }
 
 // New discovers the provider's authorization, token, issuer and JWKS
@@ -103,14 +135,117 @@ func New(ctx context.Context, cfg config.OIDCConfig) (*Service, error) {
 		RedirectURL: cfg.RedirectURI,
 		Scopes:      append([]string(nil), cfg.Scopes...),
 	}
-	service.verifier = provider.Verifier(&oidc.Config{ClientID: cfg.ClientID})
 	var metadata struct {
-		EndSessionEndpoint string `json:"end_session_endpoint"`
+		EndSessionEndpoint    string `json:"end_session_endpoint"`
+		IntrospectionEndpoint string `json:"introspection_endpoint"`
 	}
-	if err := provider.Claims(&metadata); err == nil {
-		service.endSessionEndpoint = service.publicEndpoint(metadata.EndSessionEndpoint)
+	if err := provider.Claims(&metadata); err != nil {
+		return nil, fmt.Errorf("decode oidc discovery metadata: %w", err)
+	}
+	if strings.TrimSpace(metadata.IntrospectionEndpoint) == "" {
+		return nil, errors.New("oidc discovery metadata does not contain an introspection endpoint")
+	}
+	service.endSessionEndpoint = service.publicEndpoint(metadata.EndSessionEndpoint)
+	service.verifier = provider.Verifier(&oidc.Config{ClientID: cfg.ClientID})
+	accessTokenVerifier := provider.Verifier(&oidc.Config{
+		ClientID: cfg.Audience,
+	})
+	service.verifyAccessToken = func(ctx context.Context, rawToken string) (User, error) {
+		user, err := verifyNexusAccessToken(ctx, rawToken, accessTokenVerifier, httpClient)
+		if err != nil {
+			return User{}, err
+		}
+		introspection, err := introspectNexusAccessToken(
+			ctx,
+			rawToken,
+			httpClient,
+			metadata.IntrospectionEndpoint,
+			cfg.ClientID,
+			cfg.ClientSecret,
+		)
+		if err != nil {
+			return User{}, fmt.Errorf("%w: introspection failed: %v", ErrInvalidToken, err)
+		}
+		if !introspection.Active ||
+			introspection.Subject != user.Subject ||
+			introspection.ClientID != cfg.ClientID ||
+			introspection.TokenUse != "access_token" {
+			return User{}, ErrInvalidToken
+		}
+		return user, nil
 	}
 	return service, nil
+}
+
+func verifyNexusAccessToken(ctx context.Context, rawToken string, verifier *oidc.IDTokenVerifier, httpClient *http.Client) (User, error) {
+	token, err := verifier.Verify(withOIDCHTTPClient(ctx, httpClient), rawToken)
+	if err != nil {
+		return User{}, fmt.Errorf("%w: %v", ErrInvalidToken, err)
+	}
+	var claims struct {
+		TokenUse          string `json:"token_use"`
+		Name              string `json:"name"`
+		PreferredUsername string `json:"preferred_username"`
+		Email             string `json:"email"`
+		Picture           string `json:"picture"`
+		EmailVerified     bool   `json:"email_verified"`
+	}
+	if err := token.Claims(&claims); err != nil {
+		return User{}, fmt.Errorf("%w: decode claims", ErrInvalidToken)
+	}
+	if claims.TokenUse != "access_token" || strings.TrimSpace(token.Subject) == "" {
+		return User{}, ErrInvalidToken
+	}
+	name := strings.TrimSpace(claims.Name)
+	if name == "" {
+		name = strings.TrimSpace(claims.PreferredUsername)
+	}
+	if name == "" {
+		name = token.Subject
+	}
+	return User{
+		Subject:       token.Subject,
+		Email:         claims.Email,
+		Name:          name,
+		Picture:       claims.Picture,
+		EmailVerified: claims.EmailVerified,
+	}, nil
+}
+
+func introspectNexusAccessToken(
+	ctx context.Context,
+	rawToken string,
+	client *http.Client,
+	endpoint string,
+	clientID string,
+	clientSecret string,
+) (accessTokenIntrospection, error) {
+	requestContext, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	form := url.Values{"token": []string{rawToken}}
+	request, err := http.NewRequestWithContext(requestContext, http.MethodPost, endpoint, strings.NewReader(form.Encode()))
+	if err != nil {
+		return accessTokenIntrospection{}, err
+	}
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request.SetBasicAuth(clientID, clientSecret)
+	if client == nil {
+		client = http.DefaultClient
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		return accessTokenIntrospection{}, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return accessTokenIntrospection{}, fmt.Errorf("introspection returned HTTP %d", response.StatusCode)
+	}
+	var result accessTokenIntrospection
+	decoder := json.NewDecoder(io.LimitReader(response.Body, 1<<20))
+	if err := decoder.Decode(&result); err != nil {
+		return accessTokenIntrospection{}, fmt.Errorf("decode introspection response: %w", err)
+	}
+	return result, nil
 }
 
 // NewForTest creates a service without network discovery. It is useful for
@@ -250,6 +385,11 @@ func (s *Service) Callback(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (s *Service) Me(r *http.Request) (User, bool) {
+	if r != nil {
+		if user, ok := UserFromContext(r.Context()); ok {
+			return user, true
+		}
+	}
 	if s == nil || s.sessions == nil {
 		return User{}, false
 	}
@@ -267,6 +407,19 @@ func (s *Service) Me(r *http.Request) (User, bool) {
 		Picture:       data.User.Picture,
 		EmailVerified: data.User.EmailVerified,
 	}, true
+}
+
+// AuthenticateBearer validates a NexusAuth access token and returns its user claims.
+// Signature, issuer, audience, expiry and not-before are checked by the OIDC verifier.
+func (s *Service) AuthenticateBearer(ctx context.Context, rawToken string) (User, error) {
+	if s == nil || !s.enabled || s.verifyAccessToken == nil {
+		return User{}, ErrDisabled
+	}
+	rawToken = strings.TrimSpace(rawToken)
+	if rawToken == "" {
+		return User{}, ErrInvalidToken
+	}
+	return s.verifyAccessToken(ctx, rawToken)
 }
 
 func (s *Service) Logout(w http.ResponseWriter, r *http.Request) (string, error) {
@@ -307,14 +460,57 @@ func (s *Service) Middleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r)
 			return
 		}
-		if _, ok := s.Me(r); !ok {
-			w.Header().Set("Content-Type", "application/json; charset=utf-8")
-			w.WriteHeader(http.StatusUnauthorized)
-			_, _ = w.Write([]byte(`{"error":"authentication required"}` + "\n"))
+		if rawToken, bearer, err := parseBearerToken(r.Header.Get("Authorization")); bearer {
+			if err != nil {
+				writeBearerUnauthorized(w)
+				return
+			}
+			user, err := s.AuthenticateBearer(r.Context(), rawToken)
+			if err != nil {
+				logging.FromContext(r.Context()).Warn("Bearer authentication failed.",
+					slog.String(logging.Subcategory, "Middleware"),
+					slog.Any("Error", err),
+				)
+				writeBearerUnauthorized(w)
+				return
+			}
+			setAuthenticatedUser(r, user)
+			next.ServeHTTP(w, r)
 			return
 		}
-		next.ServeHTTP(w, r)
+		if user, ok := s.Me(r); ok {
+			setAuthenticatedUser(r, user)
+			next.ServeHTTP(w, r)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json; charset=utf-8")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"authentication required"}` + "\n"))
 	})
+}
+
+func setAuthenticatedUser(r *http.Request, user User) {
+	ctx := WithUser(r.Context(), user)
+	requestLogger := logging.FromContext(ctx).With(slog.String(logging.Filter2, user.Subject))
+	*r = *r.WithContext(logging.WithLogger(ctx, requestLogger))
+}
+
+func parseBearerToken(authorization string) (token string, bearer bool, err error) {
+	fields := strings.Fields(authorization)
+	if len(fields) == 0 || !strings.EqualFold(fields[0], "Bearer") {
+		return "", false, nil
+	}
+	if len(fields) != 2 || strings.TrimSpace(fields[1]) == "" {
+		return "", true, ErrInvalidToken
+	}
+	return fields[1], true, nil
+}
+
+func writeBearerUnauthorized(w http.ResponseWriter) {
+	w.Header().Set("WWW-Authenticate", `Bearer error="invalid_token"`)
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.WriteHeader(http.StatusUnauthorized)
+	_, _ = w.Write([]byte(`{"error":"invalid_token"}` + "\n"))
 }
 
 func randomToken(size int) (string, error) {

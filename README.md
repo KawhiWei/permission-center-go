@@ -1,6 +1,6 @@
 # Permission Center
 
-一个使用 Go、PostgreSQL 和 React 实现的 RBAC 权限中心。服务接入 NexusAuth OAuth 2.0 / OpenID Connect 统一登录，采用后端管理的加密 HttpOnly Cookie 会话，浏览器不保存 access token。
+一个使用 Go、PostgreSQL 和 React 实现的 RBAC 权限中心。服务接入 NexusAuth OAuth 2.0 / OpenID Connect 统一登录，支持后端管理的加密 HttpOnly Cookie 会话和 Bearer access token；Cookie 模式下浏览器不保存 access token。
 
 ## 模型
 
@@ -77,6 +77,8 @@ PERMISSION_CENTER_SERVICE_RESOURCE_API_KEY=<service_resource-open-api-token>
 
 `oidc.enabled=false` 仅用于尚未注册 NexusAuth 客户端时的本地开发，此时 API 会绕过登录保护。
 
+启用 OIDC 后，受保护的 `/v1/*` 接口也接受 `Authorization: Bearer <access_token>`。认证中间件先通过 NexusAuth discovery/JWKS 校验 RS256 签名、公开 issuer、配置的 `oidc.audience`、`exp/nbf` 和 `token_use=access_token`，随后使用 `oidc.client_id/client_secret` 调用 discovery 返回的 introspection endpoint，继续校验 `active`、`sub`、`client_id` 和 `token_use`。因此 Token 黑名单、用户停用和 `TokenInvalidBefore` 会立即生效。ID Token、过期或撤销的 Token、签名错误、audience 不匹配以及 introspection 失败均返回 `401` 和 `WWW-Authenticate: Bearer error="invalid_token"`，不会回退到 Cookie。NexusAuth access token 的 `sub` claim 就是 userId，业务代码可通过 `auth.UserIDFromContext(r.Context())` 获取。`oidc.audience` 必须填写权限中心在 NexusAuth 中实际登记的 API Resource audience，配置的 OIDC 客户端必须是签发该 Token 的 confidential client。
+
 请求示例：
 
 ```sh
@@ -91,6 +93,27 @@ curl -X POST http://localhost:8080/v1/menus \
 curl -X POST http://localhost:8080/v1/menus \
   -H 'Content-Type: application/json' \
   -d '{"service_resource":"admin-console","parent_id":"'$MENU_ID'","code":"system:user:create","name":"新增用户","type":"button"}'
+```
+
+## 日志规范
+
+Go 服务使用与 `Luck.Logging.Serilog` 一致的固定日志模板：
+
+```text
+[yyyy-MM-dd HH:mm:ss.fff][LVL][Module][Category][Subcategory][RequestTraceId][Filter1][Filter2][Message]
+```
+
+所有字段都会输出，缺失值保留为空段。`Module` 是应用或请求模块，`Category` 是日志分类，HTTP 请求中使用稳定的路由模板；`Subcategory` 用于具体业务方法；`RequestTraceId` 优先沿用请求的 `X-Request-ID`，缺失时自动生成；`Filter1` 是每次请求单独生成的筛选标识，`Filter2` 优先使用登录用户 `sub`，未登录时自动生成。请求完成日志包含状态码、耗时、HTTP 方法和路径，panic 会先按 `ERR` 记录再继续向上抛出。
+
+配置位于 `configs/app.yaml` 的 `logging` 节，可设置 `module`、`minimum_level` 和可选的 `file_path`。`AppKey` 环境变量对模块名具有最高优先级，也可使用 `PERMISSION_CENTER_LOGGING_MODULE`、`PERMISSION_CENTER_LOGGING_MINIMUM_LEVEL` 和 `PERMISSION_CENTER_LOGGING_FILE_PATH`。文件路径留空时只写控制台，配置后会同时追加到文件。
+
+业务代码使用请求上下文中的 logger，以自动继承固定字段：
+
+```go
+logging.FromContext(ctx).Info("Policy published.",
+    slog.String(logging.Subcategory, "PublishAuthorizationPolicy"),
+    slog.String("PolicyID", policyID),
+)
 ```
 
 ## Run
